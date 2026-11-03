@@ -44,6 +44,14 @@ try {
   check(!(await b.getByRole('button', { name: 'Changer la map et les réglages' }).isVisible()), "l'invité ne voit pas les réglages");
   await a.screenshot({ path: `${shots}/e2e-lobby.png` });
 
+  if (process.env.MODE === 'ctf') {
+    await a.getByRole('button', { name: 'Changer la map et les réglages' }).click();
+    await a.getByRole('button', { name: 'Capture du drapeau' }).click();
+    await sleep(400);
+    await a.getByRole('button', { name: 'Fermer' }).click();
+    await sleep(300);
+    check((await b.locator('.lb-summary').innerText()).includes('Capture du drapeau'), "l'invité voit le mode choisi par l'hôte");
+  }
   await a.getByRole('button', { name: 'Lancer la partie' }).click();
   await sleep(1500);
   const state = p => p.evaluate(() => { const s = window.__sdb; return { state: s.state, alive: s.alive, pos: s.predictor?.state.pos }; });
@@ -54,6 +62,11 @@ try {
 
   const t0 = await a.evaluate(() => window.__sdb.predictor.state.time); await sleep(1000); const t1 = await a.evaluate(() => window.__sdb.predictor.state.time);
   console.log(`info : ${(t1 - t0).toFixed(2)} s simulées par seconde réelle chez Alice (navigateur de test sans carte graphique)`);
+  if (process.env.MODE === 'ctf') {
+    const t = await b.evaluate(() => ({ bar: getComputedStyle(document.querySelector('.hud .teambar')).display !== 'none', flags: window.__sdb.flagState.length, teams: window.__sdb.players.map(p => p.team) }));
+    check(t.bar && t.flags === 2 && t.teams[0] !== t.teams[1] && t.teams.every(x => x >= 0), `capture du drapeau : barre des équipes, 2 drapeaux, équipes ${t.teams.join(' et ')}`);
+    await b.screenshot({ path: `${shots}/e2e-ctf.png` });
+  }
   // Alice avance pendant 1 s
   await a.evaluate(() => { const s = window.__sdb; s.input.forced = true; s.input.keys.add('KeyW'); s.hud.showPrompt(false); });
   await b.evaluate(() => { const s = window.__sdb; s.input.forced = true; s.hud.showPrompt(false); });

@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import {
-  CONFIG, DEFAULT_SETTINGS, STREAKS, forwardFromAngles, getMap, groundAt, traceShot, unpackPlayer,
+  CONFIG, DEFAULT_SETTINGS, STREAKS, TEAM_COLORS, TEAM_NAMES, surfaceAt, type FlagState, forwardFromAngles, getMap, groundAt, traceShot, unpackPlayer,
   type Ability, type Input, type LobbyPlayer, type MapData, type NetPlayer, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg
 } from '@sdb/shared';
 import { Pickups, PICKUP_STYLE } from '../render/pickups';
+import { Flags } from '../render/flags';
 import { ABILITY_LABEL } from '../ui/lobby';
 import { Connection } from '../net/connection';
 import { Renderer, loadSettings, saveSettings } from '../render/renderer';
@@ -61,6 +62,10 @@ export class Session {
   private looks = new Map<string, string>();
   private meAvatar: Avatar | null = null;
   private faces = new Map<string, string>();
+  private flags: Flags | null = null;
+  private flagState: FlagState[] = [];
+  private teamScore: [number, number] = [0, 0];
+  private carriers = new Set<string>();
 
   constructor(private root: HTMLElement, private code: string, name: string, private leave: () => void) {
     root.append(this.canvas);
@@ -122,6 +127,13 @@ export class Session {
     this.renderer.scene.add(this.world.group);
     this.pickups = new Pickups(this.map);
     this.renderer.scene.add(this.pickups.group);
+    if (this.flags) { this.renderer.scene.remove(this.flags.group); this.flags = null; }
+    if (this.map.def.ctf) {
+      const m = this.map;
+      this.flags = new Flags(m.def.ctf!.bases.map(b => { const top = surfaceAt(m, b.x, b.z, 1e6); return { x: b.x, y: Number.isFinite(top) ? top : 0, z: b.z }; }));
+      this.flags.group.visible = false;
+      this.renderer.scene.add(this.flags.group);
+    }
     if (this.predictor) this.predictor.setMap(this.map); else this.predictor = new Predictor(this.map);
   }
 
@@ -140,31 +152,38 @@ export class Session {
         this.players = m.players; this.hostId = m.hostId;
         for (const [id, a] of this.avatars) if (!m.players.some(p => p.id === id)) { this.renderer.scene.remove(a.root); a.dispose(); this.avatars.delete(id); this.interp.remove(id); }
         this.roomSettings = m.settings;
+        const prevState = this.state;
+        this.state = m.state;
         for (const p of m.players) {
           if (p.id === this.me) continue;
           let a = this.avatars.get(p.id);
           if (!a) { a = new Avatar(p.color, p.name, p.hat); a.root.visible = false; this.avatars.set(p.id, a); this.renderer.scene.add(a.root); const f = this.faces.get(p.id); if (f) a.setFace(f); }
-          const look = p.color + ':' + p.hat;
-          if (this.looks.get(p.id) !== look) { a.setColor(p.color); a.setHat(p.hat); this.looks.set(p.id, look); }
+          const shown = this.isCtf() && p.team >= 0 ? TEAM_COLORS[p.team] : p.color;
+          const look = shown + ':' + p.hat;
+          if (this.looks.get(p.id) !== look) { a.setColor(shown); a.setHat(p.hat); this.looks.set(p.id, look); }
         }
         const mine = m.players.find(p => p.id === this.me);
         if (mine) {
           if (!this.meAvatar) { this.meAvatar = new Avatar(mine.color, 'Toi', mine.hat); this.renderer.scene.add(this.meAvatar.root); const f = this.faces.get(this.me); if (f) this.meAvatar.setFace(f); }
           this.meAvatar.setColor(mine.color); this.meAvatar.setHat(mine.hat);
-          const look = String(mine.color);
-          if (this.looks.get(this.me) !== look) { this.viewmodel?.group.removeFromParent(); this.viewmodel = new Viewmodel(this.renderer.camera, mine.color); this.looks.set(this.me, look); }
+          const shownMine = this.isCtf() && mine.team >= 0 ? TEAM_COLORS[mine.team] : mine.color;
+          const look = String(shownMine);
+          if (this.looks.get(this.me) !== look) { this.viewmodel?.group.removeFromParent(); this.viewmodel = new Viewmodel(this.renderer.camera, shownMine); this.looks.set(this.me, look); }
         }
-        const prev = this.state;
-        this.state = m.state;
+        const prev = prevState;
         this.lobby.update(m.players, m.hostId, this.me, m.state, m.settings);
         if (m.state !== 'playing') this.showLobby();
+        if (m.state === 'playing') this.refreshTeams();
         void prev;
         break;
       }
       case 'start':
         this.state = 'playing'; this.endsAt = m.endsAt; this.roomSettings = m.settings;
         this.loadMap(m.mapId);
-        this.hud.setGoal(m.settings.scoreToWin);
+        this.hud.setGoal(m.settings.mode === 'ctf' ? 0 : m.settings.scoreToWin);
+        this.teamScore = [0, 0]; this.flagState = []; this.carriers.clear();
+        if (this.flags) this.flags.group.visible = m.settings.mode === 'ctf';
+        this.refreshTeams();
         this.lobby.root.style.display = 'none'; this.hud.root.style.display = '';
         this.hud.setDead(null);
         if (!this.input.locked) this.hud.showPrompt(true);
@@ -204,7 +223,8 @@ export class Session {
       case 'matchEnd':
         this.state = 'ended'; this.alive = false;
         this.input.unlock(); this.hud.showBoard(false); this.hud.showPrompt(false);
-        this.lobby.showEnd(m.list, m.winner, this.me, this.me === this.hostId);
+        this.lobby.showEnd(m.list, m.winner, this.me, this.me === this.hostId, m.winnerTeam, m.teamScores);
+        this.hud.teams(false);
         this.showLobby();
         break;
       case 'pong': {
@@ -213,6 +233,12 @@ export class Session {
         break;
       }
       case 'pickups': this.pickups?.set(m.list); break;
+      case 'flags':
+        this.flagState = m.flags; this.teamScore = m.score;
+        this.carriers = new Set(m.flags.map(f => f.carrier).filter((x): x is string => !!x));
+        this.flags?.set(m.flags); this.refreshTeams();
+        break;
+      case 'flagEvent': this.onFlagEvent(m.kind, m.team, m.by); break;
       case 'pickup':
         if (m.by === this.me) this.hud.announce(PICKUP_STYLE[m.kind].label, PICKUP_STYLE[m.kind].ability ? 'Capacité : touche E, pendant 30 s' : 'Bonus ramassé', performance.now() / 1000);
         else this.hud.note(`${this.nameOf(m.by)} prend ${PICKUP_STYLE[m.kind].label}`);
@@ -273,6 +299,36 @@ export class Session {
     this.viewmodel.kick();
     this.renderer.camera.updateMatrixWorld(true);
     this.effects.beam(this.viewmodel.tipWorld(this.tmp).clone(), new THREE.Vector3(r.end.x, r.end.y, r.end.z), now);
+  }
+
+  private isCtf() { return this.roomSettings.mode === 'ctf' && this.state !== 'lobby'; }
+  private myTeam() { return this.players.find(p => p.id === this.me)?.team ?? -1; }
+
+  private refreshTeams() {
+    if (!this.isCtf()) { this.hud.teams(false); return; }
+    const status = [0, 1].map(t => {
+      const f = this.flagState.find(x => x.team === t);
+      if (!f) return '';
+      if (f.carrier) return f.carrier === this.me ? 'porté par toi' : `porté par ${this.nameOf(f.carrier)}`;
+      return f.atHome ? 'à la base' : 'au sol';
+    }) as [string, string];
+    this.hud.teams(true, this.teamScore, status, this.myTeam(), this.roomSettings.captures);
+    this.hud.carrying(this.carriers.has(this.me));
+  }
+
+  private onFlagEvent(kind: 'take' | 'drop' | 'return' | 'capture', team: number, by: string | null) {
+    const now = performance.now() / 1000, mine = this.myTeam(), who = by ? (by === this.me ? 'Tu' : this.nameOf(by)) : '';
+    const flag = team === mine ? 'ton drapeau' : `le drapeau des ${TEAM_NAMES[team]}`;
+    if (kind === 'take') {
+      if (by === this.me) this.hud.announce('Drapeau pris !', 'Ramène-le à ta base', now);
+      else if (team === mine) this.hud.announce('Drapeau volé', `${who} a pris ton drapeau`, now);
+      else this.hud.note(`${who} prend ${flag}`);
+    } else if (kind === 'drop') this.hud.note(`${who === 'Tu' ? 'Tu lâches' : who + ' lâche'} ${flag}`);
+    else if (kind === 'return') this.hud.note(by ? `${who === 'Tu' ? 'Tu ramènes' : who + ' ramène'} ${flag} à la base` : `${flag[0].toUpperCase() + flag.slice(1)} revient à la base`);
+    else if (kind === 'capture') {
+      const scorer = by ? this.players.find(p => p.id === by)?.team ?? -1 : -1;
+      this.hud.announce(scorer === mine ? 'Point pour ton équipe !' : `Les ${TEAM_NAMES[scorer] ?? ''} marquent`, by ? `${who === 'Tu' ? 'Tu as' : who + ' a'} ramené le drapeau` : '', now);
+    }
   }
 
   private fireCooldown() {
@@ -365,6 +421,14 @@ export class Session {
     if (this.meAvatar) this.meAvatar.root.visible = !playing && !!this.map;
     this.world?.update(now);
     this.pickups?.update(now);
+    if (this.flags && this.flags.group.visible) {
+      const tmp = new THREE.Vector3();
+      this.flags.update(now, id => {
+        if (id === this.me && this.predictor) { const p = this.predictor.state.pos; return tmp.set(p.x, p.y, p.z); }
+        const a = this.avatars.get(id);
+        return a ? tmp.copy(a.root.position) : null;
+      });
+    }
     this.effects.update(now);
     this.renderer.render();
     this.raf = requestAnimationFrame(x => this.frame(x));

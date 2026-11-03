@@ -20,6 +20,8 @@ export class Hud {
   private goalEl = h('small', {}, `sur ${CONFIG.scoreToWin}`);
   private lastBuffs = '';
   private lastAbility = '';
+  private teamBar = h('div', { class: 'teambar', style: 'display:none' });
+  private carryEl = h('div', { class: 'carry', style: 'display:none' }, 'Tu portes le drapeau : ramène-le à ta base');
   private hitAt = -9;
   private lastDash = '';
   readonly board: HTMLElement;
@@ -28,7 +30,7 @@ export class Hud {
 
   constructor(settings: HTMLElement) {
     this.root = h('div', { class: 'hud' },
-      this.shieldEl, this.feed, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
+      this.shieldEl, this.teamBar, this.carryEl, this.feed, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
       h('div', { class: 'cross' }), this.hit, this.pop,
       h('div', { class: 'bottom' }, this.cd, h('div', { class: 'lbl' }, h('span', {}, 'Rayon'), this.dash)),
       this.dead);
@@ -39,7 +41,17 @@ export class Hud {
       settings));
   }
 
-  setGoal(scoreToWin: number) { this.goalEl.textContent = scoreToWin ? `sur ${scoreToWin}` : 'éliminations'; }
+  setGoal(scoreToWin: number, label = 'éliminations') { this.goalEl.textContent = scoreToWin ? `sur ${scoreToWin}` : label; }
+
+  /** Capture du drapeau : score des équipes et état des deux drapeaux. */
+  teams(on: boolean, score: [number, number] = [0, 0], status: [string, string] = ['', ''], myTeam = -1, goal = 0) {
+    this.teamBar.style.display = on ? '' : 'none';
+    this.root.classList.toggle('ctf', on);
+    if (!on) { this.carryEl.style.display = 'none'; return; }
+    const side = (i: number) => h('div', { class: 'team t' + i + (i === myTeam ? ' mine' : '') }, h('b', {}, String(score[i])), h('span', {}, (i === 0 ? 'Rouges' : 'Bleus') + (i === myTeam ? ' (toi)' : '')), h('small', {}, status[i]));
+    this.teamBar.replaceChildren(side(0), h('div', { class: 'goal' }, goal ? `premier à ${goal}` : 'au temps'), side(1));
+  }
+  carrying(v: boolean) { this.carryEl.style.display = v ? '' : 'none'; }
 
   announce(text: string, sub: string, now: number) {
     this.announceEl.replaceChildren(document.createTextNode(text), h('small', {}, sub));

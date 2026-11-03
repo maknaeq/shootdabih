@@ -1,5 +1,5 @@
 import {
-  CONFIG, HATS, MAP_DEFS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES,
+  CAPTURE_CHOICES, CONFIG, GAME_MODES, HATS, LAP_CHOICES, MAP_DEFS, MODE_LABEL, PARKA_COLORS, SCORE_CHOICES, TEAM_NAMES, TIME_CHOICES, mapSupports,
   type Ability, type Hat, type LobbyPlayer, type RoomSettings, type RoomState, type ScoreLine
 } from '@sdb/shared';
 import { h, hex } from './dom';
@@ -18,7 +18,7 @@ export interface TagPos { id: string; x: number; y: number; visible: boolean }
 export interface LobbyView {
   root: HTMLElement;
   update(players: LobbyPlayer[], hostId: string, me: string, state: RoomState, settings: RoomSettings): void;
-  showEnd(list: ScoreLine[], winner: string | null, me: string, isHost: boolean): void;
+  showEnd(list: ScoreLine[], winner: string | null, me: string, isHost: boolean, winnerTeam?: number, teamScores?: [number, number]): void;
   error(msg: string): void;
   /** Place les étiquettes de nom au-dessus des persos (coordonnées écran). */
   tags(list: TagPos[]): void;
@@ -157,21 +157,30 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
   }
 
   function renderSettings(s: RoomSettings) {
+    const goalOf = (x: RoomSettings) => x.mode === 'dm' ? x.scoreToWin : x.mode === 'ctf' ? x.captures : 1;
     const set = (patch: Partial<RoomSettings>) => {
       const next = { ...s, ...patch };
-      if (next.scoreToWin === 0 && next.timeLimitMin === 0) next.timeLimitMin = 10;
+      if (next.mapId !== 'auto' && (!MAP_DEFS[next.mapId] || !mapSupports(MAP_DEFS[next.mapId], next.mode))) next.mapId = 'auto';
+      if (goalOf(next) === 0 && next.timeLimitMin === 0) next.timeLimitMin = 10;
       on.settings(next);
     };
     const maps = h('div', { class: 'lb-maps' },
-      ...[{ id: 'auto', name: 'Auto', meta: 'Selon le nombre de joueurs' }, ...Object.values(MAP_DEFS).map(d => ({ id: d.id, name: d.name, meta: `${d.size[0]} × ${d.size[1]} m · ${d.players[0]} à ${d.players[1]}` }))].map(m => {
+      ...[{ id: 'auto', name: 'Auto', meta: 'Selon le nombre de joueurs' }, ...Object.values(MAP_DEFS).filter(d => mapSupports(d, s.mode)).map(d => ({ id: d.id, name: d.name, meta: `${d.size[0]} × ${d.size[1]} m · ${d.players[0]} à ${d.players[1]}` }))].map(m => {
         const b = h('button', { type: 'button', class: 'mapcard' + (m.id === s.mapId ? ' on' : ''), 'aria-pressed': String(m.id === s.mapId) }, h('b', {}, m.name), h('span', {}, m.meta));
         b.addEventListener('click', () => set({ mapId: m.id }));
         return b;
       }));
+    const goal = s.mode === 'dm'
+      ? seg(SCORE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} élim.` : 'Illimité' })), s.scoreToWin, v => set({ scoreToWin: v }))
+      : s.mode === 'ctf'
+        ? seg(CAPTURE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} drapeau${v > 1 ? 'x' : ''}` : 'Illimité' })), s.captures, v => set({ captures: v }))
+        : seg(LAP_CHOICES.map(v => ({ v: v as number, label: `${v} tour${v > 1 ? 's' : ''}` })), s.laps, v => set({ laps: v }));
     sheetBody.replaceChildren(
+      h('div', { class: 'hint' }, 'Mode de jeu'), seg(GAME_MODES.map(v => ({ v, label: MODE_LABEL[v], disabled: !Object.values(MAP_DEFS).some(d => mapSupports(d, v)) })), s.mode, v => set({ mode: v })),
       h('div', { class: 'hint' }, 'Map'), maps,
-      h('div', { class: 'hint' }, 'Objectif'), seg(SCORE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} élim.` : 'Illimité' })), s.scoreToWin, v => set({ scoreToWin: v })),
-      h('div', { class: 'hint' }, 'Temps limite'), seg(TIME_CHOICES.map(v => ({ v: v as number, label: v ? `${v} min` : 'Sans limite', disabled: v === 0 && s.scoreToWin === 0 })), s.timeLimitMin, v => set({ timeLimitMin: v })),
+      h('div', { class: 'hint' }, 'Objectif'), goal,
+      h('div', { class: 'hint' }, 'Temps limite'), seg(TIME_CHOICES.map(v => ({ v: v as number, label: v ? `${v} min` : 'Sans limite', disabled: v === 0 && goalOf(s) === 0 })), s.timeLimitMin, v => set({ timeLimitMin: v })),
+      s.mode === 'course' ? h('div', { class: 'hint' }, 'Rayons pendant la course') : '', s.mode === 'course' ? seg([{ v: true, label: 'Oui, ils font chuter' }, { v: false, label: 'Non' }], s.raceWeapons, v => set({ raceWeapons: v })) : '',
       h('div', { class: 'hint' }, 'Capacités à ramasser sur la map'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.abilities, v => set({ abilities: v })),
       h('div', { class: 'hint' }, 'Bonus au sol'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.pickups, v => set({ pickups: v })),
       s.scoreToWin === 0 ? h('p', { class: 'hint' }, 'Éliminations illimitées : la partie s’arrête à la fin du temps.') : '');
@@ -195,8 +204,10 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
       const def = settings.mapId === 'auto' ? null : MAP_DEFS[settings.mapId];
       mapName.textContent = def ? def.name : 'Map auto';
       summary.replaceChildren(...[
+        MODE_LABEL[settings.mode],
         def ? `${def.players[0]} à ${def.players[1]} joueurs` : 'Selon le nombre de joueurs',
-        settings.scoreToWin ? `${settings.scoreToWin} éliminations` : 'Éliminations illimitées',
+        settings.mode === 'dm' ? (settings.scoreToWin ? `${settings.scoreToWin} éliminations` : 'Éliminations illimitées')
+          : settings.mode === 'ctf' ? (settings.captures ? `${settings.captures} drapeau${settings.captures > 1 ? 'x' : ''}` : 'Drapeaux illimités') : `${settings.laps} tour${settings.laps > 1 ? 's' : ''}`,
         settings.timeLimitMin ? `${settings.timeLimitMin} min` : 'Sans limite',
         settings.abilities ? 'Capacités sur la map' : 'Sans capacités',
         settings.pickups ? 'Bonus au sol' : 'Sans bonus'
@@ -222,11 +233,15 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
         el.replaceChildren(...[p.id === hostId ? h('span', { class: 'crown' }, 'Hôte') : null, h('b', {}, p.id === me ? 'Toi' : p.name), h('span', {}, HAT_LABEL[p.hat])].filter((x): x is HTMLElement => !!x));
       }
     },
-    showEnd(rows, winner, myId, isHost) {
+    showEnd(rows, winner, myId, isHost, winnerTeam, teamScores) {
       const w = rows.find(r => r.id === winner);
+      const myTeam = rows.find(r => r.id === myId)?.team ?? -1;
+      const title = winnerTeam !== undefined
+        ? (winnerTeam < 0 ? `Égalité ${teamScores?.[0] ?? 0} à ${teamScores?.[1] ?? 0}` : `${winnerTeam === myTeam ? 'Victoire' : 'Défaite'} : les ${TEAM_NAMES[winnerTeam]} gagnent ${teamScores?.[winnerTeam] ?? 0} à ${teamScores?.[1 - winnerTeam] ?? 0}`)
+        : w ? (w.id === myId ? 'Victoire !' : `Victoire de ${w.name}`) : 'Fin de la partie';
       endBox.style.display = '';
       endBox.replaceChildren(
-        h('h2', {}, w ? (w.id === myId ? 'Victoire !' : `Victoire de ${w.name}`) : 'Fin de la partie'),
+        h('h2', {}, title),
         scoreTable(rows, myId),
         h('p', { class: 'hint' }, isHost ? 'Relance quand tout le monde est prêt.' : "L'hôte peut relancer une partie."));
     },
