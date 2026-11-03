@@ -24,7 +24,7 @@ export class Predictor {
       yaw: this.state.yaw, pitch: this.state.pitch, onGround: server.onGround, time: server.time,
       dashUntil: server.dashUntil, dashReadyAt: server.dashReadyAt, padUntil: server.padUntil,
       jumpHeld: server.jumpHeld, airJumps: server.airJumps, airJumpsMax: server.airJumpsMax,
-      ability: this.state.ability, abilityReadyAt: server.abilityReadyAt, abilityUsedAt: server.abilityUsedAt
+      ability: server.ability, abilityReadyAt: server.abilityReadyAt, abilityUsedAt: server.abilityUsedAt
     };
     this.pending = this.pending.filter(i => i.seq > ack);
     for (const i of this.pending) s = stepPlayer(s, i, this.map);

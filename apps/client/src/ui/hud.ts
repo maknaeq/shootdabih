@@ -63,12 +63,13 @@ export class Hud {
     this.shieldEl.style.opacity = shielded ? '1' : '0';
   }
 
-  ability(name: string, cooldown: number) {
-    const t = name ? (cooldown > 0.05 ? `${name} ${cooldown.toFixed(1).replace('.', ',')} s` : `${name} prêt`) : '';
+  ability(name: string, cooldown: number, left = 0, passive = false) {
+    const rest = left > 0 ? ` · ${Math.ceil(left)} s` : '';
+    const t = name ? (passive ? `${name} actif${rest}` : cooldown > 0.05 ? `${name} ${cooldown.toFixed(1).replace('.', ',')} s${rest}` : `${name} prêt${rest}`) : '';
     if (t === this.lastAbility) return;
     this.lastAbility = t;
     this.abilityEl.className = 'ability-hud' + (cooldown > 0.05 ? ' cooling' : '');
-    this.abilityEl.replaceChildren(...(name ? [h('kbd', {}, 'E'), document.createTextNode(t)] : []));
+    this.abilityEl.replaceChildren(...(name ? [passive ? '' : h('kbd', {}, 'E'), document.createTextNode(t)] : []));
   }
 
   kill(killer: string, victim: string, mine: boolean, now: number) {

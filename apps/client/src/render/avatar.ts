@@ -76,6 +76,27 @@ export class Avatar {
   }
 
   setColor(c: number) { this.parkaMat.color.set(c); }
+
+  private facePlane: THREE.Mesh | null = null;
+  private faceParts: THREE.Object3D[] = [];
+  /** Photo du joueur à la place du visage (rognée en disque) ; chaîne vide pour revenir au visage dessiné. */
+  setFace(dataUrl: string) {
+    if (!this.faceParts.length) this.root.traverse(o => { if (/^(Eye|Nose)/.test(o.name)) this.faceParts.push(o); });
+    if (this.facePlane) { this.facePlane.removeFromParent(); ((this.facePlane.material as THREE.MeshBasicMaterial).map)?.dispose(); this.facePlane = null; }
+    this.faceParts.forEach(o => { o.visible = !dataUrl; });
+    if (!dataUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const g = c.getContext('2d')!;
+      g.beginPath(); g.arc(64, 64, 62, 0, Math.PI * 2); g.clip(); g.drawImage(img, 0, 0, 128, 128);
+      const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+      const plane = new THREE.Mesh(new THREE.CircleGeometry(0.16, 16), new THREE.MeshBasicMaterial({ map: tex, fog: false, transparent: true }));
+      plane.position.set(0, 1.7, 0.352);
+      this.body.add(plane); this.facePlane = plane;
+    };
+    img.src = dataUrl;
+  }
   setShield(on: boolean) { this.bubble.visible = on; }
 
   setHat(hat: Hat) {

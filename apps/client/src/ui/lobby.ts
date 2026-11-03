@@ -1,153 +1,244 @@
 import {
-  ABILITIES, CONFIG, HATS, MAP_DEFS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES,
+  CONFIG, HATS, MAP_DEFS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES,
   type Ability, type Hat, type LobbyPlayer, type RoomSettings, type RoomState, type ScoreLine
 } from '@sdb/shared';
 import { h, hex } from './dom';
 
 export const HAT_LABEL: Record<Hat, string> = { aucun: 'Rien', bonnet: 'Bonnet', casquette: 'Casquette', chapka: 'Chapka', casque: 'Casque' };
-export const ABILITY_LABEL: Record<Ability, { name: string; text: string }> = {
-  grappin: { name: 'Grappin', text: "T'accroche à ce que tu vises, jusqu'à 32 m. Recharge 6 s." },
-  blink: { name: 'Saut éclair', text: 'Te projette 8 m devant toi en un instant. Recharge 5 s.' },
-  saut: { name: 'Double saut', text: 'Un saut de plus en l’air, à chaque fois.' },
-  bouclier: { name: 'Bouclier', text: 'Encaisse un tir pendant 2,5 s. Recharge 10 s.' },
-  aucune: { name: 'Aucune', text: '' }
+export const ABILITY_LABEL: Record<Ability, { name: string }> = {
+  grappin: { name: 'Grappin' }, blink: { name: 'Saut éclair' }, saut: { name: 'Double saut' }, bouclier: { name: 'Bouclier' }, aucune: { name: '' }
 };
 
-export interface Loadout { color: number; hat: Hat; ability: Ability }
+export interface Loadout { color: number; hat: Hat }
 export function loadLoadout(): Partial<Loadout> { try { return JSON.parse(localStorage.getItem('sdb-loadout') ?? '{}'); } catch { return {}; } }
 function saveLoadout(l: Loadout) { try { localStorage.setItem('sdb-loadout', JSON.stringify(l)); } catch { /* stockage indisponible */ } }
+
+export interface TagPos { id: string; x: number; y: number; visible: boolean }
 
 export interface LobbyView {
   root: HTMLElement;
   update(players: LobbyPlayer[], hostId: string, me: string, state: RoomState, settings: RoomSettings): void;
   showEnd(list: ScoreLine[], winner: string | null, me: string, isHost: boolean): void;
   error(msg: string): void;
+  /** Place les étiquettes de nom au-dessus des persos (coordonnées écran). */
+  tags(list: TagPos[]): void;
 }
 
-interface Handlers { start(): void; leave(): void; customize(l: Loadout): void; settings(s: RoomSettings): void }
+interface Handlers {
+  start(): void; leave(): void;
+  customize(l: Loadout): void;
+  settings(s: RoomSettings): void;
+  face(dataUrl: string): void;
+}
 
-const segStyle = 'display:flex;flex-wrap:wrap;gap:6px';
-function seg<T extends string | number>(items: ReadonlyArray<{ v: T; label: string; disabled?: boolean }>, current: T, onPick: (v: T) => void, enabled: boolean) {
-  return h('div', { style: segStyle, role: 'group' }, ...items.map(it => {
+function seg<T extends string | number | boolean>(items: ReadonlyArray<{ v: T; label: string; disabled?: boolean }>, current: T, onPick: (v: T) => void) {
+  return h('div', { class: 'chips', role: 'group' }, ...items.map(it => {
     const b = h('button', { type: 'button', class: 'chip-btn' + (it.v === current ? ' on' : ''), 'aria-pressed': String(it.v === current) }, it.label);
-    b.disabled = !enabled || !!it.disabled;
+    b.disabled = !!it.disabled;
     b.addEventListener('click', () => onPick(it.v));
     return b;
   }));
 }
 
-/** Salle d'attente : lien du salon, joueurs, perso de chacun, réglages de l'hôte, lancement. Sert aussi d'écran de fin. */
+/**
+ * Salle d'attente « plateau » : la map en fond avec les persos debout, le nom de chacun au-dessus de lui,
+ * le salon en haut à gauche, la map en haut à droite, la personnalisation au centre en bas, Lancer en bas à droite.
+ * Les réglages de partie ne sont visibles que pour l'hôte, dans un panneau qui glisse depuis la droite.
+ */
 export function lobbyView(code: string, on: Handlers): LobbyView {
   const url = `${location.origin}/s/${code}`;
-  const linkEl = h('div', { class: 'link grow', tabindex: '0' }, url);
-  const copyBtn = h('button', { class: 'btn ghost', type: 'button' }, 'Copier le lien');
+  const tagLayer = h('div', { class: 'lb-tags', 'aria-hidden': 'true' });
+  const copyBtn = h('button', { class: 'btn ghost xs', type: 'button' }, 'Copier le lien');
   copyBtn.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(url); copyBtn.textContent = 'Lien copié'; }
-    catch { copyBtn.textContent = 'Sélectionne le lien'; linkEl.focus(); getSelection()?.selectAllChildren(linkEl); }
-    setTimeout(() => { copyBtn.textContent = 'Copier le lien'; }, 2000);
+    catch { copyBtn.textContent = url; }
+    setTimeout(() => { copyBtn.textContent = 'Copier le lien'; }, 2500);
   });
-  const list = h('ul', { class: 'players' });
-  const startBtn = h('button', { class: 'btn', type: 'button', onclick: on.start }, 'Lancer la partie');
-  const waiting = h('p', { class: 'hint' });
-  const status = h('p', { class: 'status error', role: 'status' });
-  const endBox = h('div', { style: 'display:none;flex-direction:column;gap:10px' });
-  const perso = h('div', { class: 'section' });
-  const rules = h('div', { class: 'section' });
+  const count = h('span', { class: 'hint' });
+  const tl = h('div', { class: 'lb-corner lb-tl' },
+    h('div', { class: 'row' }, h('span', { class: 'hint' }, 'Salon'), h('b', { class: 'code sm' }, code)),
+    h('div', { class: 'row' }, copyBtn, h('button', { class: 'btn ghost xs', type: 'button', onclick: on.leave }, 'Quitter')),
+    count);
+  const mapName = h('div', { class: 'lb-mapname' });
+  const summary = h('div', { class: 'lb-summary' });
+  const settingsBtn = h('button', { class: 'btn ghost xs', type: 'button' }, 'Changer la map et les réglages');
+  const tr = h('div', { class: 'lb-corner lb-tr' }, mapName, summary, settingsBtn);
+  const status = h('p', { class: 'status error lb-status', role: 'status' });
+  const startBtn = h('button', { class: 'btn big', type: 'button', onclick: on.start }, 'Lancer la partie');
+  const waitPill = h('span', { class: 'lb-wait' });
+  const br = h('div', { class: 'lb-corner lb-br' }, status, startBtn, waitPill);
+
+  // personnalisation
+  const tabs = ['parka', 'tete', 'photo'] as const;
+  const tabLabels: Record<typeof tabs[number], string> = { parka: 'Parka', tete: 'Tête', photo: 'Ma tête' };
+  let tab: typeof tabs[number] = 'parka';
+  const tabBar = h('div', { class: 'seg3', role: 'tablist' });
+  const body = h('div', { class: 'ctab-body' });
+  const dock = h('div', { class: 'lb-dock' }, tabBar, body);
+
+  // panneau des réglages (hôte)
+  const sheetBody = h('div', { class: 'col' });
+  const sheet = h('aside', { class: 'lb-sheet', 'aria-label': 'Réglages de la partie' },
+    h('div', { class: 'row', style: 'justify-content:space-between' }, h('h3', {}, 'Réglages'), h('button', { class: 'btn ghost xs', type: 'button', onclick: () => sheet.classList.remove('open') }, 'Fermer')),
+    sheetBody);
+  settingsBtn.addEventListener('click', () => sheet.classList.toggle('open'));
+
+  const endBox = h('div', { class: 'lb-end', style: 'display:none' });
+  const root = h('div', { class: 'lb' }, tagLayer, tl, tr, endBox, dock, br, sheet);
 
   const saved = loadLoadout();
-  let loadout: Loadout = { color: saved.color ?? -1, hat: saved.hat ?? 'bonnet', ability: saved.ability ?? 'saut' };
+  const loadout: Loadout = { color: saved.color ?? -1, hat: saved.hat ?? 'bonnet' };
   let sentInitial = false;
+  let players: LobbyPlayer[] = [], me = '', hostId = '';
+  const tagEls = new Map<string, HTMLElement>();
 
-  const left = h('div', { class: 'col' },
-    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('div', { class: 'hint' }, 'Salon'), h('div', { class: 'code' }, code)),
-      h('button', { class: 'btn ghost', type: 'button', onclick: on.leave }, 'Quitter')),
-    endBox,
-    h('div', { class: 'row' }, linkEl, copyBtn),
-    list, startBtn, waiting, status);
-  const right = h('div', { class: 'col' }, perso, rules);
-  const card = h('div', { class: 'card wide' }, left, right);
-  const root = h('div', { class: 'screen' }, card);
-
-  function renderPerso(players: LobbyPlayer[], me: string, abilitiesOn: boolean) {
-    const mine = players.find(p => p.id === me);
-    if (!mine) return;
-    const taken = new Set(players.filter(p => p.id !== me).map(p => p.color));
-    const colors = h('div', { style: 'display:flex;flex-wrap:wrap;gap:6px', role: 'group', 'aria-label': 'Couleur de parka' }, ...PARKA_COLORS.map(c => {
-      const b = h('button', { type: 'button', class: 'swatch' + (c === mine.color ? ' on' : ''), style: `background:${hex(c)}`, 'aria-label': 'Couleur ' + hex(c), 'aria-pressed': String(c === mine.color) });
-      b.disabled = taken.has(c);
-      if (b.disabled) b.title = 'Déjà prise';
-      b.addEventListener('click', () => pick({ ...current(mine), color: c }));
-      return b;
-    }));
-    const hats = seg(HATS.map(v => ({ v, label: HAT_LABEL[v] })), mine.hat, v => pick({ ...current(mine), hat: v }), true);
-    const abilities = h('div', { class: 'abilities' }, ...ABILITIES.map(a => {
-      const b = h('button', { type: 'button', class: 'ability' + (a === mine.ability ? ' on' : ''), 'aria-pressed': String(a === mine.ability) },
-        h('b', {}, ABILITY_LABEL[a].name), h('span', {}, ABILITY_LABEL[a].text));
-      b.disabled = !abilitiesOn;
-      b.addEventListener('click', () => pick({ ...current(mine), ability: a }));
-      return b;
-    }));
-    perso.replaceChildren(
-      h('h3', {}, 'Ton perso'),
-      h('div', { class: 'hint' }, 'Parka'), colors,
-      h('div', { class: 'hint' }, 'Sur la tête'), hats,
-      h('div', { class: 'hint' }, abilitiesOn ? 'Capacité (touche E)' : "Capacités désactivées par l'hôte"), abilities);
+  // webcam
+  let stream: MediaStream | null = null;
+  const video = h('video', { class: 'lb-video', autoplay: true, playsinline: true, muted: true });
+  function stopCam() { stream?.getTracks().forEach(t => t.stop()); stream = null; }
+  async function startCam(msg: HTMLElement) {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' }, audio: false });
+      video.srcObject = stream; renderBody();
+    } catch {
+      msg.textContent = 'Caméra refusée ou indisponible. Autorise-la dans ton navigateur puis réessaie.';
+    }
   }
-  const current = (mine: LobbyPlayer): Loadout => ({ color: mine.color, hat: mine.hat, ability: mine.ability });
-  function pick(l: Loadout) { loadout = l; saveLoadout(l); on.customize(l); }
+  function snap() {
+    const c = document.createElement('canvas'); c.width = c.height = 96;
+    const g = c.getContext('2d')!;
+    const vw = video.videoWidth || 320, vh = video.videoHeight || 240, side = Math.min(vw, vh) * 0.8;
+    g.translate(96, 0); g.scale(-1, 1);
+    g.drawImage(video, (vw - side) / 2, (vh - side) / 2 - vh * 0.05, side, side, 0, 0, 96, 96);
+    const data = c.toDataURL('image/jpeg', 0.7);
+    stopCam();
+    try { localStorage.setItem('sdb-face', data); } catch { /* stockage indisponible */ }
+    on.face(data); renderBody();
+  }
 
-  function renderRules(settings: RoomSettings, isHost: boolean) {
+  function pick(l: Partial<Loadout>) { Object.assign(loadout, l); saveLoadout(loadout); on.customize({ ...loadout }); }
+
+  function renderTabs() {
+    tabBar.replaceChildren(...tabs.map(t => {
+      const b = h('button', { type: 'button', role: 'tab', 'aria-selected': String(t === tab) }, tabLabels[t]);
+      b.addEventListener('click', () => { tab = t; if (t !== 'photo') stopCam(); renderTabs(); renderBody(); });
+      return b;
+    }));
+  }
+
+  function renderBody() {
+    const mine = players.find(p => p.id === me);
+    if (!mine) { body.replaceChildren(); return; }
+    if (tab === 'parka') {
+      const taken = new Set(players.filter(p => p.id !== me).map(p => p.color));
+      body.replaceChildren(h('div', { class: 'swatches', role: 'group', 'aria-label': 'Couleur de parka' }, ...PARKA_COLORS.map(c => {
+        const b = h('button', { type: 'button', class: 'swatch' + (c === mine.color ? ' on' : ''), style: `background:${hex(c)}`, 'aria-label': 'Couleur ' + hex(c), 'aria-pressed': String(c === mine.color) });
+        b.disabled = taken.has(c);
+        if (b.disabled) b.title = 'Déjà prise';
+        b.addEventListener('click', () => pick({ color: c, hat: mine.hat }));
+        return b;
+      })));
+    } else if (tab === 'tete') {
+      body.replaceChildren(seg(HATS.map(v => ({ v, label: HAT_LABEL[v] })), mine.hat, v => pick({ color: mine.color, hat: v })));
+    } else {
+      const msg = h('span', { class: 'hint' }, 'Ta photo n’est envoyée qu’aux joueurs de ce salon et n’est gardée nulle part.');
+      const hasFace = (() => { try { return !!localStorage.getItem('sdb-face'); } catch { return false; } })();
+      if (stream) {
+        body.replaceChildren(h('div', { class: 'row' }, video,
+          h('button', { class: 'btn', type: 'button', onclick: snap }, 'Prendre la photo'),
+          h('button', { class: 'btn ghost xs', type: 'button', onclick: () => { stopCam(); renderBody(); } }, 'Annuler')));
+      } else {
+        body.replaceChildren(h('div', { class: 'row', style: 'flex-wrap:wrap' },
+          h('button', { class: 'btn ghost xs', type: 'button', onclick: () => startCam(msg) }, hasFace ? 'Reprendre une photo' : 'Mettre ma tête avec la webcam'),
+          hasFace ? h('button', { class: 'btn ghost xs', type: 'button', onclick: () => { try { localStorage.removeItem('sdb-face'); } catch { /* idem */ } on.face(''); renderBody(); } }, 'Enlever ma photo') : '',
+          msg));
+      }
+    }
+  }
+
+  function renderSettings(s: RoomSettings) {
     const set = (patch: Partial<RoomSettings>) => {
-      const next = { ...settings, ...patch };
+      const next = { ...s, ...patch };
       if (next.scoreToWin === 0 && next.timeLimitMin === 0) next.timeLimitMin = 10;
       on.settings(next);
     };
-    const maps = [{ v: 'auto', label: 'Selon le nombre de joueurs' }, ...Object.values(MAP_DEFS).map(d => ({ v: d.id, label: d.name }))];
-    rules.replaceChildren(
-      h('h3', {}, isHost ? 'Réglages de la partie' : "Réglages de l'hôte"),
-      h('div', { class: 'hint' }, 'Map'), seg(maps, settings.mapId, v => set({ mapId: v }), isHost),
-      h('div', { class: 'hint' }, 'Objectif'), seg(SCORE_CHOICES.map(v => ({ v, label: v ? `${v} élim.` : 'Illimité' })), settings.scoreToWin as number, v => set({ scoreToWin: v }), isHost),
-      h('div', { class: 'hint' }, 'Temps limite'), seg(TIME_CHOICES.map(v => ({ v, label: v ? `${v} min` : 'Sans limite', disabled: v === 0 && settings.scoreToWin === 0 })), settings.timeLimitMin as number, v => set({ timeLimitMin: v }), isHost),
-      h('div', { class: 'hint' }, 'Capacités'), seg([{ v: 1, label: 'Activées' }, { v: 0, label: 'Désactivées' }], settings.abilities ? 1 : 0, v => set({ abilities: v === 1 }), isHost),
-      h('div', { class: 'hint' }, 'Bonus au sol'), seg([{ v: 1, label: 'Activés' }, { v: 0, label: 'Désactivés' }], settings.pickups ? 1 : 0, v => set({ pickups: v === 1 }), isHost),
-      settings.scoreToWin === 0 ? h('p', { class: 'hint' }, 'Éliminations illimitées : la partie s’arrête à la fin du temps.') : '');
+    const maps = h('div', { class: 'lb-maps' },
+      ...[{ id: 'auto', name: 'Auto', meta: 'Selon le nombre de joueurs' }, ...Object.values(MAP_DEFS).map(d => ({ id: d.id, name: d.name, meta: `${d.size[0]} × ${d.size[1]} m · ${d.players[0]} à ${d.players[1]}` }))].map(m => {
+        const b = h('button', { type: 'button', class: 'mapcard' + (m.id === s.mapId ? ' on' : ''), 'aria-pressed': String(m.id === s.mapId) }, h('b', {}, m.name), h('span', {}, m.meta));
+        b.addEventListener('click', () => set({ mapId: m.id }));
+        return b;
+      }));
+    sheetBody.replaceChildren(
+      h('div', { class: 'hint' }, 'Map'), maps,
+      h('div', { class: 'hint' }, 'Objectif'), seg(SCORE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} élim.` : 'Illimité' })), s.scoreToWin, v => set({ scoreToWin: v })),
+      h('div', { class: 'hint' }, 'Temps limite'), seg(TIME_CHOICES.map(v => ({ v: v as number, label: v ? `${v} min` : 'Sans limite', disabled: v === 0 && s.scoreToWin === 0 })), s.timeLimitMin, v => set({ timeLimitMin: v })),
+      h('div', { class: 'hint' }, 'Capacités à ramasser sur la map'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.abilities, v => set({ abilities: v })),
+      h('div', { class: 'hint' }, 'Bonus au sol'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.pickups, v => set({ pickups: v })),
+      s.scoreToWin === 0 ? h('p', { class: 'hint' }, 'Éliminations illimitées : la partie s’arrête à la fin du temps.') : '');
   }
 
+  renderTabs();
   return {
     root,
-    update(players, hostId, me, state, settings) {
-      if (!sentInitial && players.some(p => p.id === me)) {
+    update(list, host, myId, state, settings) {
+      players = list; me = myId; hostId = host;
+      if (!sentInitial && list.some(p => p.id === me)) {
         sentInitial = true;
-        const mine = players.find(p => p.id === me)!;
-        const want: Loadout = { color: PARKA_COLORS.includes(loadout.color as typeof PARKA_COLORS[number]) && !players.some(p => p.id !== me && p.color === loadout.color) ? loadout.color : mine.color, hat: loadout.hat, ability: loadout.ability };
-        if (want.color !== mine.color || want.hat !== mine.hat || want.ability !== mine.ability) on.customize(want);
+        const mine = list.find(p => p.id === me)!;
+        const free = PARKA_COLORS.includes(loadout.color as typeof PARKA_COLORS[number]) && !list.some(p => p.id !== me && p.color === loadout.color);
+        const want: Loadout = { color: free ? loadout.color : mine.color, hat: loadout.hat };
+        if (want.color !== mine.color || want.hat !== mine.hat) on.customize(want);
+        try { const f = localStorage.getItem('sdb-face'); if (f) on.face(f); } catch { /* stockage indisponible */ }
       }
-      list.replaceChildren(...players.map(p => h('li', {},
-        h('span', { class: 'dot', style: `background:${hex(p.color)}` }),
-        h('span', {}, p.name + (p.id === me ? ' (toi)' : '')),
-        h('span', { class: 'badge' }, HAT_LABEL[p.hat] + (settings.abilities ? ' · ' + ABILITY_LABEL[p.ability].name : '')),
-        p.id === hostId ? h('span', { class: 'badge host' }, 'Hôte') : null)));
-      const isHost = me === hostId, enough = players.length >= CONFIG.minPlayersToStart;
+      const isHost = me === hostId, enough = list.length >= CONFIG.minPlayersToStart;
+      count.textContent = `${list.length} joueur${list.length > 1 ? 's' : ''} sur ${CONFIG.maxPlayers}`;
+      const def = settings.mapId === 'auto' ? null : MAP_DEFS[settings.mapId];
+      mapName.textContent = def ? def.name : 'Map auto';
+      summary.replaceChildren(...[
+        def ? `${def.players[0]} à ${def.players[1]} joueurs` : 'Selon le nombre de joueurs',
+        settings.scoreToWin ? `${settings.scoreToWin} éliminations` : 'Éliminations illimitées',
+        settings.timeLimitMin ? `${settings.timeLimitMin} min` : 'Sans limite',
+        settings.abilities ? 'Capacités sur la map' : 'Sans capacités',
+        settings.pickups ? 'Bonus au sol' : 'Sans bonus'
+      ].map(t => h('span', {}, t)));
+      settingsBtn.style.display = isHost ? '' : 'none';
+      if (!isHost) sheet.classList.remove('open');
       startBtn.style.display = isHost ? '' : 'none';
       startBtn.disabled = !enough;
       startBtn.textContent = state === 'ended' ? 'Rejouer' : 'Lancer la partie';
-      const host = players.find(p => p.id === hostId);
-      waiting.textContent = !enough ? 'Envoie le lien à tes amis : il faut au moins 2 joueurs pour lancer.'
-        : isHost ? `${players.length} joueurs prêts. Tu peux lancer quand tu veux.`
-        : `En attente que ${host?.name ?? "l'hôte"} lance la partie.`;
+      const hostName = list.find(p => p.id === hostId)?.name ?? "l'hôte";
+      waitPill.textContent = !enough ? 'Envoie le lien : il faut au moins 2 joueurs' : isHost ? '' : `En attente que ${hostName} lance la partie`;
+      waitPill.style.display = waitPill.textContent ? '' : 'none';
       if (state === 'lobby') endBox.style.display = 'none';
-      renderPerso(players, me, settings.abilities);
-      renderRules(settings, isHost);
+      renderBody();
+      if (isHost) renderSettings(settings);
+      // étiquettes
+      for (const [id, el] of tagEls) if (!list.some(p => p.id === id)) { el.remove(); tagEls.delete(id); }
+      for (const p of list) {
+        let el = tagEls.get(p.id);
+        if (!el) { el = h('div', { class: 'tag3d' }); tagLayer.append(el); tagEls.set(p.id, el); }
+        el.className = 'tag3d' + (p.id === me ? ' me' : '');
+        el.style.setProperty('--c', hex(p.color));
+        el.replaceChildren(...[p.id === hostId ? h('span', { class: 'crown' }, 'Hôte') : null, h('b', {}, p.id === me ? 'Toi' : p.name), h('span', {}, HAT_LABEL[p.hat])].filter((x): x is HTMLElement => !!x));
+      }
     },
-    showEnd(rows, winner, me, isHost) {
+    showEnd(rows, winner, myId, isHost) {
       const w = rows.find(r => r.id === winner);
-      endBox.style.display = 'flex';
+      endBox.style.display = '';
       endBox.replaceChildren(
-        h('h2', { style: 'margin:0;font-family:var(--display);font-size:30px;text-transform:uppercase;letter-spacing:.04em' }, w ? (w.id === me ? 'Victoire !' : `Victoire de ${w.name}`) : 'Fin de la partie'),
-        scoreTable(rows, me),
+        h('h2', {}, w ? (w.id === myId ? 'Victoire !' : `Victoire de ${w.name}`) : 'Fin de la partie'),
+        scoreTable(rows, myId),
         h('p', { class: 'hint' }, isHost ? 'Relance quand tout le monde est prêt.' : "L'hôte peut relancer une partie."));
     },
-    error(msg) { status.textContent = msg; setTimeout(() => { if (status.textContent === msg) status.textContent = ''; }, 4000); }
+    error(msg) { status.textContent = msg; setTimeout(() => { if (status.textContent === msg) status.textContent = ''; }, 4000); },
+    tags(list) {
+      for (const t of list) {
+        const el = tagEls.get(t.id);
+        if (!el) continue;
+        el.style.display = t.visible ? '' : 'none';
+        el.style.left = t.x.toFixed(1) + 'px'; el.style.top = t.y.toFixed(1) + 'px';
+      }
+    }
   };
 }
 

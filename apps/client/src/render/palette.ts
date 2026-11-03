@@ -6,7 +6,7 @@ export const PALETTE: Record<Mat, number> = {
   ground: 0x6e6655, dirt: 0x5e5646, snow: 0xe8ece8, rock: 0x5f5b55, wood: 0x8a6a4a, plank: 0x9a7a55,
   metal: 0x7d8482, grate: 0x5f6668, concrete: 0x8a8c86, tent: 0xd9a43a, tentDark: 0x2a2620,
   cont1: 0x4e6873, cont2: 0xa8553e, cont3: 0x5f7d5a, cabin: 0x7a5a42, roof: 0x3a3330, trunk: 0x4a3a30,
-  leaf: 0x2e4a43, orange: 0xe8843e, white: 0xf3efe6, dark: 0x262a2b, glass: 0x1c2628, tire: 0x1f1d1c, pad: 0xe8843e
+  leaf: 0x2e4a43, orange: 0xe8843e, white: 0xf3efe6, dark: 0x262a2b, glass: 0x1c2628, tire: 0x1f1d1c, pad: 0xe8843e, water: 0x2f5d6a
 };
 
 const cache = new Map<string, THREE.MeshPhongMaterial>();

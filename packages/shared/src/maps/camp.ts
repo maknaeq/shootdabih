@@ -10,6 +10,7 @@ export const camp: MapDef = {
   name: 'Camp de base',
   size: [48, 44],
   players: [2, 8],
+  lobby: { x: 13.1, z: 21, angle: 0.35 },
   mood: {
     sky: [0x14282a, 0x3a554b],
     fog: 0x24403b, fogNear: 30, fogFar: 95,
@@ -92,7 +93,7 @@ export const camp: MapDef = {
     b.pad(38.5, 22, 3.5, 15, 0);
 
     // bonus : deux au sol, un sur l'anneau, un sur la plateforme centrale
-    b.pickup(14, 21); b.pickup(34, 27); b.pickup(44, 6); b.pickup(24, 22);
+    b.pickup(14, 21); b.pickup(34, 27); b.pickup(44, 6); b.pickup(24, 22); b.pickup(4, 32); b.pickup(39, 38.5);
 
     b.lamp(12, 4.4, 7.5); b.lamp(36, 4.4, 7.5); b.lamp(12, 4.4, 36.5); b.lamp(36, 4.4, 36.5);
 

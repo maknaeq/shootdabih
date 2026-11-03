@@ -1,5 +1,5 @@
 import {
-  ABILITIES, CONFIG, DEFAULT_SETTINGS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
+  ABILITIES, BONUS_KINDS, CONFIG, DEFAULT_SETTINGS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
   chooseSpawn, cleanName, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
   type Ability, type ClientMsg, type Hat, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PickupKind, type PickupState,
   type PlayerState, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg, type Vec3
@@ -13,7 +13,10 @@ interface Player {
   name: string;
   color: number;
   hat: Hat;
+  /** Capacité ramassée sur la map, valable jusqu'à abilityUntil ou la mort. */
   ability: Ability;
+  abilityUntil: number;
+  face: string;
   send(m: ServerMsg): void;
   state: PlayerState;
   alive: boolean;
@@ -28,7 +31,6 @@ interface Player {
   history: Array<{ t: number; pos: Vec3 }>;
   overchargeUntil: number;
   pierceUntil: number;
-  jumpsUntil: number;
   shieldBuffUntil: number;
   shieldAbilityUntil: number;
   lastAbilityUse: number;
@@ -69,14 +71,15 @@ export class Room {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = PARKA_COLORS.find(c => !used.has(c)) ?? PARKA_COLORS[0];
     const p: Player = {
-      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'saut', send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
+      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
       kills: 0, deaths: 0, streak: 0, bestStreak: 0, lastFireAt: -1e9, queue: [], ack: -1, history: [],
-      overchargeUntil: 0, pierceUntil: 0, jumpsUntil: 0, shieldBuffUntil: 0, shieldAbilityUntil: 0, lastAbilityUse: -1
+      overchargeUntil: 0, pierceUntil: 0, shieldBuffUntil: 0, shieldAbilityUntil: 0, lastAbilityUse: -1
     };
     this.players.set(id, p);
     if (!this.hostId) this.hostId = id;
     send({ t: 'welcome', you: id, room: this.code, mapId: this.mapId, hostId: this.hostId, serverTime: this.clock.now() });
     this.broadcastLobby();
+    for (const q of this.players.values()) if (q !== p && q.face) send({ t: 'face', id: q.id, data: q.face });
     if (this.state === 'playing') {
       send({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
       send({ t: 'pickups', list: this.pickupList() });
@@ -110,8 +113,6 @@ export class Room {
         const taken = [...this.players.values()].some(q => q !== p && q.color === msg.color);
         if (!taken) p.color = msg.color;
         p.hat = msg.hat;
-        p.ability = msg.ability;
-        if (this.state === 'playing' && p.alive) this.applyLoadout(p);
         this.broadcastLobby();
         break;
       }
@@ -120,6 +121,10 @@ export class Room {
         if (this.state === 'playing') break;
         this.settings = msg.settings;
         this.broadcastLobby();
+        break;
+      case 'face':
+        p.face = msg.data;
+        this.broadcast({ t: 'face', id: p.id, data: p.face });
         break;
       case 'join': break;
     }
@@ -147,10 +152,11 @@ export class Room {
     this.state = 'playing';
     this.endsAt = this.settings.timeLimitMin > 0 ? now + this.settings.timeLimitMin * 60_000 : 0;
     this.lastUsed = [];
-    this.pickups = this.settings.pickups ? this.map.pickups.map((pos, i) => ({ pos, kind: PICKUP_KINDS[i % PICKUP_KINDS.length], active: true, respawnAt: 0 })) : [];
+    const kinds = this.allowedKinds();
+    this.pickups = kinds.length ? this.map.pickups.map((pos, i) => ({ pos, kind: kinds[i % kinds.length], active: true, respawnAt: 0 })) : [];
     for (const q of this.players.values()) {
       q.kills = 0; q.deaths = 0; q.streak = 0; q.bestStreak = 0; q.alive = false; q.respawnAt = now; q.lastFireAt = -1e9; q.queue = []; q.history = [];
-      q.overchargeUntil = 0; q.pierceUntil = 0; q.jumpsUntil = 0; q.shieldBuffUntil = 0; q.shieldAbilityUntil = 0;
+      q.overchargeUntil = 0; q.pierceUntil = 0; q.shieldBuffUntil = 0; q.shieldAbilityUntil = 0; q.ability = 'aucune'; q.abilityUntil = 0;
     }
     this.broadcastLobby();
     this.broadcast({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
@@ -159,13 +165,18 @@ export class Room {
     this.broadcast({ t: 'scores', list: this.scores() });
   }
 
-  private effectiveAbility(p: Player): Ability { return this.settings.abilities ? p.ability : 'aucune'; }
+  /** Objets qui peuvent apparaître selon les réglages de l'hôte. */
+  private allowedKinds(): PickupKind[] {
+    return PICKUP_KINDS.filter(k => (BONUS_KINDS as readonly string[]).includes(k) ? this.settings.pickups : this.settings.abilities);
+  }
 
-  /** Recalcule ce qui dépend de la capacité et des bonus : sauts en l'air autorisés. */
+  private effectiveAbility(p: Player): Ability { return this.clock.now() < p.abilityUntil ? p.ability : 'aucune'; }
+
+  /** Recalcule ce qui dépend de la capacité ramassée : sauts en l'air autorisés. */
   private applyLoadout(p: Player) {
-    const now = this.clock.now();
-    p.state.ability = this.effectiveAbility(p);
-    p.state.airJumpsMax = (p.state.ability === 'saut' ? 1 : 0) + (now < p.jumpsUntil ? CONFIG.jumpsBonus : 0);
+    const ab = this.effectiveAbility(p);
+    if (ab !== p.state.ability) { p.state.ability = ab; if (ab === 'aucune') { p.ability = 'aucune'; p.abilityUntil = 0; } }
+    p.state.airJumpsMax = ab === 'saut' ? 1 : 0;
   }
 
   tick() {
@@ -192,7 +203,8 @@ export class Room {
       }
       this.pickups.forEach((s, i) => {
         if (!s.active && now >= s.respawnAt) {
-          s.active = true; s.kind = PICKUP_KINDS[(PICKUP_KINDS.indexOf(s.kind) + 1 + i) % PICKUP_KINDS.length];
+          const kinds = this.allowedKinds();
+          s.active = true; s.kind = kinds[(kinds.indexOf(s.kind) + 1 + i) % kinds.length] ?? s.kind;
           this.broadcast({ t: 'pickups', list: this.pickupList() });
         }
       });
@@ -212,8 +224,12 @@ export class Room {
       s.active = false; s.respawnAt = now + CONFIG.pickupRespawn * 1000;
       if (s.kind === 'overcharge') p.overchargeUntil = now + CONFIG.overchargeSeconds * 1000;
       if (s.kind === 'pierce') p.pierceUntil = now + CONFIG.pierceSeconds * 1000;
-      if (s.kind === 'jumps') { p.jumpsUntil = now + CONFIG.jumpsSeconds * 1000; this.applyLoadout(p); p.state.airJumps = p.state.airJumpsMax; }
       if (s.kind === 'shield') p.shieldBuffUntil = now + CONFIG.shieldBuffSeconds * 1000;
+      if ((ABILITIES as readonly string[]).includes(s.kind)) {
+        p.ability = s.kind as Ability; p.abilityUntil = now + CONFIG.abilityPickupSeconds * 1000;
+        p.state.ability = 'aucune'; this.applyLoadout(p);
+        p.state.abilityReadyAt = p.state.time; p.state.airJumps = p.state.airJumpsMax;
+      }
       this.broadcast({ t: 'pickup', i, by: p.id, kind: s.kind });
       this.broadcast({ t: 'pickups', list: this.pickupList() });
     });
@@ -228,10 +244,11 @@ export class Room {
     const s = this.map.spawns[k];
     const yaw = openYaw(this.map, s);
     const time = p.state.time;
-    p.state = makePlayerState(s, yaw, this.effectiveAbility(p));
+    p.ability = 'aucune'; p.abilityUntil = 0;
+    p.state = makePlayerState(s, yaw, 'aucune');
     p.state.time = time; p.state.dashReadyAt = time; p.state.abilityReadyAt = time;
     p.lastAbilityUse = p.state.abilityUsedAt;
-    p.overchargeUntil = 0; p.pierceUntil = 0; p.jumpsUntil = 0; p.shieldBuffUntil = 0; p.shieldAbilityUntil = 0;
+    p.overchargeUntil = 0; p.pierceUntil = 0; p.shieldBuffUntil = 0; p.shieldAbilityUntil = 0;
     this.applyLoadout(p);
     p.alive = true;
     p.history = [{ t: now, pos: { ...s } }];
@@ -318,13 +335,14 @@ export class Room {
       padUntil: p.state.padUntil, onGround: p.state.onGround, time: p.state.time,
       jumpHeld: p.state.jumpHeld, airJumps: p.state.airJumps, airJumpsMax: p.state.airJumpsMax,
       abilityReadyAt: p.state.abilityReadyAt, abilityUsedAt: p.state.abilityUsedAt,
-      overchargeUntil: p.overchargeUntil, pierceUntil: p.pierceUntil, jumpsUntil: p.jumpsUntil,
-      shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak
+      overchargeUntil: p.overchargeUntil, pierceUntil: p.pierceUntil,
+      shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak,
+      ability: p.state.ability, abilityUntil: p.abilityUntil
     }));
     for (const p of this.players.values()) p.send({ t: 'snapshot', time: now, ack: p.ack, players });
   }
 
-  private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, hat: p.hat, ability: p.ability })); }
+  private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, hat: p.hat })); }
   private broadcastLobby() { this.broadcast({ t: 'lobby', players: this.lobbyPlayers(), hostId: this.hostId ?? '', state: this.state, settings: this.settings }); }
   private broadcast(m: ServerMsg) { for (const p of this.players.values()) p.send(m); }
 }

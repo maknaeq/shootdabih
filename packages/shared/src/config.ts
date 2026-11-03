@@ -34,7 +34,7 @@ export const CONFIG = {
   shieldAbilitySeconds: 2.5, shieldAbilityCooldown: 10,
   pickupRespawn: 20, pickupRadius: 1.3,
   overchargeSeconds: 10, overchargeFactor: 0.5,
-  pierceSeconds: 10, jumpsSeconds: 15, jumpsBonus: 2, shieldBuffSeconds: 30
+  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30
 } as const;
 
 export const HATS = ['aucun', 'bonnet', 'casquette', 'chapka', 'casque'] as const;
@@ -48,7 +48,10 @@ export interface RoomSettings { mapId: string; scoreToWin: number; timeLimitMin:
 export const DEFAULT_SETTINGS: RoomSettings = { mapId: 'auto', scoreToWin: 25, timeLimitMin: 10, abilities: true, pickups: true };
 export const SCORE_CHOICES = [10, 25, 50, 0] as const;
 export const TIME_CHOICES = [5, 10, 15, 20, 0] as const;
-export const PICKUP_KINDS = ['overcharge', 'pierce', 'jumps', 'shield'] as const;
+/** Bonus au sol : effets temporaires. */
+export const BONUS_KINDS = ['overcharge', 'pierce', 'shield'] as const;
+/** Les capacités se ramassent aussi sur la map, puis s'utilisent avec E. */
+export const PICKUP_KINDS = ['overcharge', 'pierce', 'shield', 'grappin', 'blink', 'saut', 'bouclier'] as const;
 export type PickupKind = typeof PICKUP_KINDS[number];
 /** Paliers de série annoncés. */
 export const STREAKS: Record<number, string> = { 3: 'Triplé', 5: 'Inarrêtable', 10: 'Légendaire', 15: 'Divin', 20: 'Hors catégorie' };

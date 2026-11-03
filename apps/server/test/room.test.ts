@@ -121,6 +121,7 @@ describe('ajouts', () => {
     room.handle(a, { t: 'settings', settings: { mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
     room.handle(a, { t: 'start' });
     expect(room.players.get(a)!.state.ability).toBe('aucune');
+    expect((room as unknown as { pickups: Array<{ kind: string }> }).pickups.length).toBe(0);
     for (let i = 0; i < 26; i++) { advance(1300); place(); const { yaw, pitch } = aimAtB(); room.handle(a, { t: 'fire', seq: i, yaw, pitch, renderTime: now() }); }
     expect(room.state).toBe('playing');
     advance(5 * 60_000);
@@ -130,10 +131,29 @@ describe('ajouts', () => {
   it('personnalisation : couleur libre, pas celle d’un autre', () => {
     const { room, a, b } = setup();
     const colorA = room.players.get(a)!.color;
-    room.handle(b, { t: 'customize', color: colorA, hat: 'chapka', ability: 'grappin' });
+    room.handle(b, { t: 'customize', color: colorA, hat: 'chapka' });
     expect(room.players.get(b)!.color).not.toBe(colorA);
     expect(room.players.get(b)!.hat).toBe('chapka');
-    expect(room.players.get(b)!.ability).toBe('grappin');
+  });
+
+  it('une capacité se ramasse sur la map et se perd à la mort', () => {
+    const { room, a, b, advance, place, aimAtB, now } = setup();
+    room.handle(a, { t: 'start' });
+    advance(50);
+    const r = room as unknown as { pickups: Array<{ pos: { x: number; y: number; z: number }; kind: string; active: boolean }> };
+    const spot = r.pickups.find(s => s.kind === 'grappin')!;
+    const pa = room.players.get(a)!;
+    pa.state = makePlayerState({ ...spot.pos }); pa.history = [];
+    advance(50);
+    expect(pa.state.ability).toBe('grappin');
+    expect(spot.active).toBe(false);
+    advance(1300); place();
+    const pb = room.players.get(b)!;
+    const ang = anglesTo({ ...pb.state.pos, y: pb.state.pos.y + CONFIG.eyeHeight }, { ...pa.state.pos, y: pa.state.pos.y + 1 });
+    room.handle(b, { t: 'fire', seq: 1, yaw: ang.yaw, pitch: ang.pitch, renderTime: now() });
+    advance(1200);
+    expect(room.players.get(a)!.state.ability).toBe('aucune');
+    void aimAtB;
   });
 });
 

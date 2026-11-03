@@ -6,7 +6,7 @@ import {
 
 const near = (a: number, b: number, eps = 1e-6) => expect(Math.abs(a - b)).toBeLessThan(eps);
 const mood = { sky: [0, 0] as [number, number], fog: 0, fogNear: 1, fogFar: 2, hemiSky: 0, hemiGround: 0, hemiIntensity: 1, sun: 0, sunIntensity: 1, sunDir: [0, 1, 0] as [number, number, number], lamp: 0 };
-const def = (build: MapDef['build'], size: [number, number] = [40, 40]): MapDef => ({ id: 't', name: 't', size, players: [2, 8], mood, build });
+const def = (build: MapDef['build'], size: [number, number] = [40, 40]): MapDef => ({ id: 't', name: 't', size, players: [2, 8], mood, lobby: { x: 1, z: 1, angle: 0 }, build });
 
 // sol 40×40, un mur en x 10..11, une rampe de 0 à 2 sur x 20..24, une dalle à 3 m en z 30..34
 const test = buildMap(def(b => {
@@ -154,8 +154,8 @@ describe('protocole', () => {
   });
 });
 
-describe('Camp de base', () => {
-  const camp = getMap('camp');
+for (const id of ['camp', 'relais']) describe('map ' + id, () => {
+  const camp = getMap(id);
   it('chaque spawn est sur un sol et pas dans un mur', () => {
     camp.spawns.forEach(s => {
       expect(Math.abs(groundAt(camp, s.x, s.z, s.y) - s.y)).toBeLessThan(0.15);

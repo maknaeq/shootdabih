@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CONFIG, DEFAULT_SETTINGS, STREAKS, forwardFromAngles, getMap, traceShot,
+  CONFIG, DEFAULT_SETTINGS, STREAKS, forwardFromAngles, getMap, groundAt, traceShot,
   type Ability, type Input, type LobbyPlayer, type MapData, type NetPlayer, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg
 } from '@sdb/shared';
 import { Pickups, PICKUP_STYLE } from '../render/pickups';
@@ -58,6 +58,8 @@ export class Session {
   private pickups: Pickups | null = null;
   private myNet: NetPlayer | null = null;
   private looks = new Map<string, string>();
+  private meAvatar: Avatar | null = null;
+  private faces = new Map<string, string>();
 
   constructor(private root: HTMLElement, private code: string, name: string, private leave: () => void) {
     root.append(this.canvas);
@@ -69,8 +71,9 @@ export class Session {
     this.lobby = lobbyView(code, {
       start: () => this.conn.send({ t: 'start' }),
       leave: () => this.quit(),
-      customize: l => this.conn.send({ t: 'customize', color: l.color, hat: l.hat, ability: l.ability }),
-      settings: s => this.conn.send({ t: 'settings', settings: s })
+      customize: l => this.conn.send({ t: 'customize', color: l.color, hat: l.hat }),
+      settings: s => this.conn.send({ t: 'settings', settings: s }),
+      face: d => this.conn.send({ t: 'face', data: d })
     });
     root.append(this.hud.root, this.hud.board, this.hud.prompt, this.lobby.root);
     this.hud.root.style.display = 'none';
@@ -121,10 +124,7 @@ export class Session {
     if (this.predictor) this.predictor.setMap(this.map); else this.predictor = new Predictor(this.map);
   }
 
-  private myAbility(): Ability {
-    const me = this.players.find(p => p.id === this.me);
-    return this.roomSettings.abilities && me ? me.ability : 'aucune';
-  }
+  private myAbility(): Ability { return 'aucune'; }
 
   private colorOf(id: string) { return this.players.find(p => p.id === id)?.color ?? 0xf3efe6; }
   private nameOf(id: string) { return this.players.find(p => p.id === id)?.name ?? '?'; }
@@ -142,12 +142,14 @@ export class Session {
         for (const p of m.players) {
           if (p.id === this.me) continue;
           let a = this.avatars.get(p.id);
-          if (!a) { a = new Avatar(p.color, p.name, p.hat); a.root.visible = false; this.avatars.set(p.id, a); this.renderer.scene.add(a.root); }
+          if (!a) { a = new Avatar(p.color, p.name, p.hat); a.root.visible = false; this.avatars.set(p.id, a); this.renderer.scene.add(a.root); const f = this.faces.get(p.id); if (f) a.setFace(f); }
           const look = p.color + ':' + p.hat;
           if (this.looks.get(p.id) !== look) { a.setColor(p.color); a.setHat(p.hat); this.looks.set(p.id, look); }
         }
         const mine = m.players.find(p => p.id === this.me);
         if (mine) {
+          if (!this.meAvatar) { this.meAvatar = new Avatar(mine.color, 'Toi', mine.hat); this.renderer.scene.add(this.meAvatar.root); const f = this.faces.get(this.me); if (f) this.meAvatar.setFace(f); }
+          this.meAvatar.setColor(mine.color); this.meAvatar.setHat(mine.hat);
           const look = String(mine.color);
           if (this.looks.get(this.me) !== look) { this.viewmodel?.group.removeFromParent(); this.viewmodel = new Viewmodel(this.renderer.camera, mine.color); this.looks.set(this.me, look); }
         }
@@ -210,7 +212,7 @@ export class Session {
       }
       case 'pickups': this.pickups?.set(m.list); break;
       case 'pickup':
-        if (m.by === this.me) this.hud.announce(PICKUP_STYLE[m.kind].label, 'Bonus ramassé', performance.now() / 1000);
+        if (m.by === this.me) this.hud.announce(PICKUP_STYLE[m.kind].label, PICKUP_STYLE[m.kind].ability ? 'Capacité : touche E, pendant 30 s' : 'Bonus ramassé', performance.now() / 1000);
         else this.hud.note(`${this.nameOf(m.by)} prend ${PICKUP_STYLE[m.kind].label}`);
         break;
       case 'streak':
@@ -225,11 +227,15 @@ export class Session {
         if (m.id === this.me) this.hud.announce('Bouclier', 'Il vient de te sauver', performance.now() / 1000);
         else if (m.by === this.me) this.hud.note(`Bouclier de ${this.nameOf(m.id)}`);
         break;
+      case 'face':
+        this.faces.set(m.id, m.data);
+        if (m.id === this.me) this.meAvatar?.setFace(m.data); else this.avatars.get(m.id)?.setFace(m.data);
+        break;
       case 'error': this.lobby.error(m.message); break;
     }
   }
 
-  private showLobby() { this.hud.root.style.display = 'none'; this.lobby.root.style.display = ''; for (const a of this.avatars.values()) a.root.visible = false; }
+  private showLobby() { this.hud.root.style.display = 'none'; this.lobby.root.style.display = ''; }
 
   private lost() {
     if (this.banner) return;
@@ -278,10 +284,44 @@ export class Session {
     if (n && n.alive) {
       if (n.overchargeUntil > sn) list.push([PICKUP_STYLE.overcharge.label, (n.overchargeUntil - sn) / 1000, '#f3c84a']);
       if (n.pierceUntil > sn) list.push([PICKUP_STYLE.pierce.label, (n.pierceUntil - sn) / 1000, '#7fd6ff']);
-      if (n.jumpsUntil > sn) list.push([PICKUP_STYLE.jumps.label, (n.jumpsUntil - sn) / 1000, '#9fd6a0']);
-      if (n.shield) list.push(['Bouclier', 0, '#f3efe6']);
+      if (n.shield) list.push(['Protégé', 0, '#f3efe6']);
     }
     this.hud.buffs(list, !!(n && n.alive && n.shield));
+  }
+
+  /** Salle d'attente : tous les persos debout en rang dans la map, la caméra qui oscille doucement devant eux. */
+  private lobbyScene(dt: number, now: number) {
+    const L = this.map!.def.lobby, cam = this.renderer.camera;
+    const ids = this.players.map(p => p.id);
+    const n = ids.length, gap = 1.45, a = L.angle;
+    const rx = Math.cos(a), rz = -Math.sin(a);
+    ids.forEach((id, i) => {
+      const av = id === this.me ? this.meAvatar : this.avatars.get(id);
+      if (!av) return;
+      const off = (i - (n - 1) / 2) * gap, back = Math.abs(i - (n - 1) / 2) * 0.35;
+      av.root.visible = true;
+      av.root.position.set(L.x + rx * off - Math.sin(a) * back, 0, L.z + rz * off - Math.cos(a) * back);
+      av.root.position.y = this.lobbyGround(av.root.position.x, av.root.position.z);
+      av.update(dt, 0, a - Math.PI, 0);
+    });
+    const sw = Math.sin(now * 0.25) * 0.25, R = 10 + Math.max(0, n - 4) * 0.9;
+    cam.position.set(L.x + Math.sin(a + sw) * R, 4.4 + Math.max(0, n - 4) * 0.25, L.z + Math.cos(a + sw) * R);
+    cam.lookAt(L.x, 1.5, L.z);
+    if (Math.abs(cam.fov - this.renderer.baseFov * 0.8) > 0.1) { cam.fov = this.renderer.baseFov * 0.8; cam.updateProjectionMatrix(); }
+    this.viewmodel?.setVisible(false);
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight, v = new THREE.Vector3();
+    this.lobby.tags(ids.map(id => {
+      const av = id === this.me ? this.meAvatar : this.avatars.get(id);
+      if (!av) return { id, x: 0, y: 0, visible: false };
+      v.set(av.root.position.x, av.root.position.y + 2.45, av.root.position.z).project(cam);
+      return { id, x: (v.x + 1) / 2 * w, y: (1 - v.y) / 2 * h, visible: v.z < 1 };
+    }));
+  }
+
+  private lobbyGround(x: number, z: number) {
+    if (!this.map) return 0;
+    const g = groundAt(this.map, x, z, 0.5);
+    return Number.isFinite(g) ? g : 0;
   }
 
   private frame(t: number) {
@@ -315,16 +355,12 @@ export class Session {
       }
       this.hud.update(now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.max(0, s.dashReadyAt - s.time), this.endsAt ? (this.endsAt - this.serverNow()) / 1000 : Infinity);
       this.hudBuffs();
-      const ab = s.ability;
-      this.hud.ability(ab === 'aucune' || ab === 'saut' ? '' : ABILITY_LABEL[ab].name, Math.max(0, s.abilityReadyAt - s.time));
+      const ab = s.ability, left = this.myNet ? (this.myNet.abilityUntil - this.serverNow()) / 1000 : 0;
+      this.hud.ability(ab === 'aucune' ? '' : ABILITY_LABEL[ab].name, ab === 'saut' ? 0 : Math.max(0, s.abilityReadyAt - s.time), left, ab === 'saut');
     } else if (this.map) {
-      // vue d'ensemble qui tourne lentement derrière la salle d'attente
-      const [W, D] = this.map.def.size, R = Math.max(W, D) * 0.7, a = now * 0.06;
-      const cam = this.renderer.camera;
-      cam.position.set(W / 2 + Math.cos(a) * R, Math.max(W, D) * 0.45, D / 2 + Math.sin(a) * R);
-      cam.lookAt(W / 2, 0, D / 2);
-      this.viewmodel?.setVisible(false);
+      this.lobbyScene(dt, now);
     }
+    if (this.meAvatar) this.meAvatar.root.visible = !playing && !!this.map;
     this.world?.update(now);
     this.pickups?.update(now);
     this.effects.update(now);

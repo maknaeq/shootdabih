@@ -1,0 +1,21 @@
+[Unit]
+Description=shootdabih, serveur de jeu
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__
+Environment=NODE_ENV=production
+Environment=PORT=__PORT__
+Environment=STATIC_DIR=__DIR__/apps/client/dist
+ExecStart=__DIR__/apps/server/node_modules/.bin/tsx __DIR__/apps/server/src/index.ts
+Restart=always
+RestartSec=2
+# le serveur n'écoute que derrière Caddy
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

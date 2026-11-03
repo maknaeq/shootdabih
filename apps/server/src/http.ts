@@ -51,7 +51,7 @@ export function startServer(port: number, allowedOrigins: string[] = ['*'], stat
     res.writeHead(404).end();
   });
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   http.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://x');
     const room = url.pathname === '/ws' ? rooms.get(url.searchParams.get('room') ?? '') : undefined;

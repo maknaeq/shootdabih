@@ -23,7 +23,8 @@ try {
   browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const open = async name => {
     const ctx = await browser.newContext({ viewport: { width: 800, height: 450 } });
-    await ctx.addInitScript(n => { localStorage.setItem('sdb-name', n); localStorage.setItem('sdb-settings', JSON.stringify({ shadows: process.env.SHADOWS === '1', resolution: process.env.SHADOWS === '1' ? 1 : 0.5, fov: 85, sensitivity: 1 })); }, name);
+    const settings = JSON.stringify({ shadows: process.env.SHADOWS === '1', resolution: process.env.SHADOWS === '1' ? 1 : 0.5, fov: 85, sensitivity: 1 });
+    await ctx.addInitScript(([n, st]) => { localStorage.setItem('sdb-name', n); localStorage.setItem('sdb-settings', st); }, [name, settings]);
     const page = await ctx.newPage();
     page.on('pageerror', e => console.log(`[${name}] erreur page :`, e.message));
     return page;
@@ -37,9 +38,10 @@ try {
   check(/\/s\/[A-Z0-9]{6}$/.test(roomUrl), 'création du salon et lien ' + roomUrl.split('/').pop());
   await a.goto(roomUrl + '?test');
   await b.goto(roomUrl + '?test');
-  await a.locator('.players li').nth(1).waitFor({ timeout: 15000 });
-  check((await a.locator('.players li').count()) === 2, "l'hôte voit 2 joueurs dans la salle d'attente");
-  check(await b.getByText("En attente que Alice lance la partie.").isVisible(), "l'invité attend l'hôte");
+  await a.locator('.tag3d').nth(1).waitFor({ state: 'attached', timeout: 15000 });
+  check((await a.locator('.tag3d').count()) === 2, "l'hôte voit 2 joueurs dans la salle d'attente");
+  check(await b.getByText('En attente que Alice lance la partie').isVisible(), "l'invité attend l'hôte");
+  check(!(await b.getByRole('button', { name: 'Changer la map et les réglages' }).isVisible()), "l'invité ne voit pas les réglages");
   await a.screenshot({ path: `${shots}/e2e-lobby.png` });
 
   await a.getByRole('button', { name: 'Lancer la partie' }).click();

@@ -1,8 +1,9 @@
 import { buildMap } from '../map/builder';
 import type { MapData, MapDef } from '../map/types';
 import { camp } from './camp';
+import { relais } from './relais';
 
-export const MAP_DEFS: Record<string, MapDef> = { [camp.id]: camp };
+export const MAP_DEFS: Record<string, MapDef> = { [camp.id]: camp, [relais.id]: relais };
 
 const cache = new Map<string, MapData>();
 /** Map construite (mise en cache). */

@@ -1,15 +1,17 @@
 import type { Input } from './physics';
-import { ABILITIES, HATS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES, type Ability, type Hat, type PickupKind, type RoomSettings } from './config';
+import { HATS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES, type Ability, type Hat, type PickupKind, type RoomSettings } from './config';
 import { MAP_DEFS } from './maps/index';
 
-export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat; ability: Ability }
+export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat }
 export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number }
 export interface NetPlayer {
   id: string; x: number; y: number; z: number; yaw: number; pitch: number; alive: boolean;
   vx: number; vy: number; vz: number; dashReadyAt: number; dashUntil: number; padUntil: number; onGround: boolean; time: number;
   jumpHeld: boolean; airJumps: number; airJumpsMax: number; abilityReadyAt: number; abilityUsedAt: number;
   /** Bonus actifs : fin en temps serveur (ms) ; shield = protégé contre le prochain tir. */
-  overchargeUntil: number; pierceUntil: number; jumpsUntil: number; shield: boolean; streak: number;
+  overchargeUntil: number; pierceUntil: number; shield: boolean; streak: number;
+  /** Capacité ramassée et fin de sa durée (temps serveur, ms). */
+  ability: Ability; abilityUntil: number;
 }
 export interface PickupState { i: number; kind: PickupKind; active: boolean }
 export type RoomState = 'lobby' | 'playing' | 'ended';
@@ -20,8 +22,9 @@ export type ClientMsg =
   | { t: 'input'; inputs: Input[] }
   | { t: 'fire'; seq: number; yaw: number; pitch: number; renderTime: number }
   | { t: 'ping'; c: number }
-  | { t: 'customize'; color: number; hat: Hat; ability: Ability }
-  | { t: 'settings'; settings: RoomSettings };
+  | { t: 'customize'; color: number; hat: Hat }
+  | { t: 'settings'; settings: RoomSettings }
+  | { t: 'face'; data: string };
 
 export type ServerMsg =
   | { t: 'welcome'; you: string; room: string; mapId: string; hostId: string; serverTime: number }
@@ -39,6 +42,7 @@ export type ServerMsg =
   | { t: 'pickups'; list: PickupState[] }
   | { t: 'pickup'; i: number; by: string; kind: PickupKind }
   | { t: 'shieldHit'; id: string; by: string }
+  | { t: 'face'; id: string; data: string }
   | { t: 'error'; message: string };
 
 export const encode = (m: ClientMsg | ServerMsg): string => JSON.stringify(m);
@@ -66,8 +70,9 @@ export function decodeClient(raw: string): ClientMsg | null {
     case 'fire': return isNum(o.seq) && isNum(o.yaw) && isNum(o.pitch) && isNum(o.renderTime) ? { t: 'fire', seq: o.seq, yaw: o.yaw, pitch: o.pitch, renderTime: o.renderTime } : null;
     case 'ping': return isNum(o.c) ? { t: 'ping', c: o.c } : null;
     case 'customize':
-      return isNum(o.color) && (PARKA_COLORS as readonly number[]).includes(o.color) && (HATS as readonly unknown[]).includes(o.hat) && (ABILITIES as readonly unknown[]).includes(o.ability)
-        ? { t: 'customize', color: o.color, hat: o.hat as Hat, ability: o.ability as Ability } : null;
+      return isNum(o.color) && (PARKA_COLORS as readonly number[]).includes(o.color) && (HATS as readonly unknown[]).includes(o.hat)
+        ? { t: 'customize', color: o.color, hat: o.hat as Hat } : null;
+    case 'face': return typeof o.data === 'string' && o.data.length <= 24000 && (o.data === '' || o.data.startsWith('data:image/jpeg;base64,')) ? { t: 'face', data: o.data } : null;
     case 'settings': {
       const s = o.settings as Record<string, unknown> | undefined;
       if (!s) return null;
