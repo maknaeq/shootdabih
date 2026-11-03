@@ -30,6 +30,8 @@ export function unpackPlayer(a: PackedPlayer): NetPlayer & { carrying: boolean }
   };
 }
 export type RoomState = 'lobby' | 'playing' | 'ended';
+/** Salon listé sur la page d'accueil. */
+export interface RoomInfo { code: string; players: number; max: number; state: RoomState; mode: GameMode; map: string; host: string }
 
 export type ClientMsg =
   | { t: 'join'; name: string }

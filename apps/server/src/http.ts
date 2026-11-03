@@ -43,6 +43,10 @@ export function startServer(port: number, allowedOrigins: string[] = ['*'], stat
     if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
     if (req.url === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok'); return; }
     if (req.url === '/version') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ version: VERSION, rooms: rooms.count })); return; }
+    if (req.url === '/rooms' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ rooms: rooms.list() }));
+      return;
+    }
     if (req.url === '/rooms' && req.method === 'POST') {
       const r = rooms.create();
       res.writeHead(201, { 'Content-Type': 'application/json' }).end(JSON.stringify({ code: r.code }));

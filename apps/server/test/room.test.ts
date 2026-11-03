@@ -209,6 +209,8 @@ describe('serveur', () => {
       expect(c1.msgs[0].t).toBe('welcome');
       const lastLobby = [...c1.msgs].reverse().find(m => m.t === 'lobby');
       expect(lastLobby && lastLobby.t === 'lobby' && lastLobby.players.length).toBe(2);
+      const listed = await (await fetch(base + '/rooms')).json() as { rooms: Array<{ code: string; players: number; host: string }> };
+      expect(listed.rooms).toEqual([expect.objectContaining({ code, players: 2, host: 'Alice' })]);
       c1.ws.close(); c2.ws.close();
       const bad = await fetch(base + '/rooms/ZZZZZZ');
       expect(bad.status).toBe(404);

@@ -17,6 +17,8 @@ export class Rooms {
 
   get(code: string): Room | undefined { return this.rooms.get(code.toUpperCase()); }
   get count() { return this.rooms.size; }
+  /** Salons avec au moins un joueur, les plus remplis d'abord. */
+  list() { return [...this.rooms.values()].filter(r => r.size > 0).map(r => r.info()).sort((a, b) => b.players - a.players); }
 
   tick() {
     const now = this.clock.now();

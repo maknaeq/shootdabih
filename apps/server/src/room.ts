@@ -3,7 +3,7 @@ import {
   dist, mapSupports, surfaceAt, type FlagState,
   chooseSpawn, cleanName, packPlayer, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
   type Ability, type ClientMsg, type Hat, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PickupKind, type PickupState,
-  type PlayerState, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg, type Vec3
+  type PlayerState, type RoomInfo, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg, type Vec3
 } from '@sdb/shared';
 
 export interface Clock { now(): number }
@@ -77,6 +77,11 @@ export class Room {
   }
 
   get size() { return this.players.size; }
+
+  info(): RoomInfo {
+    const def = this.settings.mapId === 'auto' ? null : MAP_DEFS[this.settings.mapId];
+    return { code: this.code, players: this.players.size, max: CONFIG.maxPlayers, state: this.state, mode: this.settings.mode, map: this.state === 'playing' ? this.map.def.name : def ? def.name : 'Auto', host: (this.hostId && this.players.get(this.hostId)?.name) || '' };
+  }
 
   addPlayer(rawName: string, send: (m: ServerMsg) => void): string | null {
     if (this.players.size >= CONFIG.maxPlayers) { send({ t: 'error', message: 'Le salon est plein (12 joueurs).' }); return null; }

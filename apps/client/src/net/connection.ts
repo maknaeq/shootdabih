@@ -1,4 +1,4 @@
-import { decodeServer, encode, type ClientMsg, type ServerMsg } from '@sdb/shared';
+import { decodeServer, encode, type ClientMsg, type RoomInfo, type ServerMsg } from '@sdb/shared';
 
 export const SERVER_URL: string = (import.meta.env.VITE_SERVER_URL as string | undefined)
   ?? (import.meta.env.DEV ? `${location.protocol}//${location.hostname}:8787` : location.origin);
@@ -31,6 +31,13 @@ export async function createRoom(onWaking: WakeReport): Promise<string> {
   if (!res.ok) throw new Error('La création du salon a échoué.');
   const { code } = await res.json() as { code: string };
   return code;
+}
+
+export async function listRooms(onWaking: WakeReport): Promise<RoomInfo[]> {
+  const res = await callServer('/rooms', undefined, onWaking);
+  if (!res.ok) throw new Error('La liste des salons est indisponible.');
+  const { rooms } = await res.json() as { rooms: RoomInfo[] };
+  return rooms;
 }
 
 export type RoomCheck = { ok: true } | { ok: false; reason: 'missing' };
