@@ -25,7 +25,10 @@ export class Interpolator {
     for (let i = list.length - 1; i >= 0; i--) {
       if (list[i].t <= t) {
         const a = list[i], b = list[i + 1];
-        if (!b) return { ...a.p, speed: Math.hypot(a.p.vx, a.p.vz) };
+        if (!b) {
+          const ahead = Math.min(0.15, Math.max(0, (t - a.t) / 1000));
+          return { ...a.p, x: a.p.x + a.p.vx * ahead, z: a.p.z + a.p.vz * ahead, speed: Math.hypot(a.p.vx, a.p.vz) };
+        }
         const k = (t - a.t) / (b.t - a.t || 1);
         let dy = b.p.yaw - a.p.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
         return {

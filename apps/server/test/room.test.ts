@@ -81,7 +81,7 @@ describe('salon', () => {
     const yaw = room.players.get(a)!.state.yaw;
     const inputs = Array.from({ length: 30 }, (_, i) => ({ seq: i + 1, dt: 1 / 60, fwd: true, back: false, left: false, right: false, jump: false, dash: false, yaw, pitch: 0 }));
     room.handle(a, { t: 'input', inputs });
-    advance(100);
+    advance(700);
     const after = room.players.get(a)!.state.pos;
     expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeGreaterThan(1);
     const snap = [...inbox.a].reverse().find(m => m.t === 'snapshot');

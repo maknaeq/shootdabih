@@ -25,7 +25,7 @@ export const CONFIG = {
   hitRadius: 0.45,
   hitHeight: 1.85,
   maxRewindMs: 200,
-  interpDelayMs: 100,
+  interpDelayMs: 150,
   killPlaneY: -25,
   emptyRoomTtlMs: 5 * 60 * 1000
 } as const;

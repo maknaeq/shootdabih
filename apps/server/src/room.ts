@@ -119,8 +119,9 @@ export class Room {
           if (now >= p.respawnAt) this.respawn(p, now);
           continue;
         }
-        for (const i of p.queue) { p.state = stepPlayer(p.state, i, this.map); p.ack = i.seq; }
-        p.queue = [];
+        // une entrée par pas en régime normal, un peu plus pour rattraper un retard : le mouvement reste régulier
+        const n = Math.min(p.queue.length, p.queue.length > 8 ? 4 : p.queue.length > 3 ? 2 : 1);
+        for (const i of p.queue.splice(0, n)) { p.state = stepPlayer(p.state, i, this.map); p.ack = i.seq; }
         if (p.state.pos.y < CONFIG.killPlaneY) this.respawn(p, now);
         p.history.push({ t: now, pos: { ...p.state.pos } });
         while (p.history.length && p.history[0].t < now - HISTORY_MS) p.history.shift();
