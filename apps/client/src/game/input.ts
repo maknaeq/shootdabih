@@ -8,6 +8,9 @@ export class InputState {
   private dashPressed = false;
   private abilityPressed = false;
   private jumpHeld = false;
+  private meleePressed = false;
+  /** Arme demandée : 0 à 3 pour une touche, ou +1/-1 pour la molette ; null si rien. */
+  private weaponReq: { slot?: number; step?: number } | null = null;
   onTab: (down: boolean) => void = () => {};
   onLockChange: (locked: boolean) => void = () => {};
   private abort = new AbortController();
@@ -20,6 +23,9 @@ export class InputState {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (!e.repeat && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) this.dashPressed = true;
       if (!e.repeat && (e.code === 'KeyE' || e.code === 'KeyF')) this.abilityPressed = true;
+      if (!e.repeat && e.code === 'KeyV') this.meleePressed = true;
+      const digit = /^Digit([1-4])$/.exec(e.code);
+      if (digit && !e.repeat) this.weaponReq = { slot: Number(digit[1]) - 1 };
       this.keys.add(e.code);
     }, o);
     window.addEventListener('keyup', e => { if (e.code === 'Tab') { this.onTab(false); return; } this.keys.delete(e.code); }, o);
@@ -36,6 +42,7 @@ export class InputState {
       if (e.button === 2) this.dashPressed = true;
     }, o);
     target.addEventListener('contextmenu', e => e.preventDefault(), o);
+    target.addEventListener('wheel', e => { if (this.locked && Math.abs(e.deltaY) > 0) this.weaponReq = { step: e.deltaY > 0 ? 1 : -1 }; }, { ...o, passive: true });
     document.addEventListener('pointerlockchange', () => { if (!this.locked) this.keys.clear(); this.onLockChange(this.locked); }, o);
   }
 
@@ -60,6 +67,8 @@ export class InputState {
   takeFire() { const f = this.firePressed; this.firePressed = false; return f; }
   takeDash() { const d = this.dashPressed; this.dashPressed = false; return d; }
   takeAbility() { const a = this.abilityPressed; this.abilityPressed = false; return a; }
+  takeMelee() { const m = this.meleePressed; this.meleePressed = false; return m; }
+  takeWeapon() { const w = this.weaponReq; this.weaponReq = null; return w; }
 
   dispose() { this.abort.abort(); this.unlock(); }
 }

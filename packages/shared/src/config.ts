@@ -34,8 +34,24 @@ export const CONFIG = {
   shieldAbilitySeconds: 2.5, shieldAbilityCooldown: 10,
   pickupRespawn: 20, pickupRadius: 1.3,
   overchargeSeconds: 10, overchargeFactor: 0.5,
-  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30
+  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30,
+  meleeRange: 2.3, meleeCooldown: 1.5, meleeCone: Math.PI / 3, execLockSeconds: 1.1,
+  killcamRespawnDelay: 2.5
 } as const;
+
+export const WEAPONS = ['rayon', 'grenaille', 'rafale', 'precision'] as const;
+export type WeaponId = typeof WEAPONS[number];
+export interface WeaponDef { label: string; level: number; cooldown: number; range: number; pellets: number; spread: number; pierce: boolean; color: number }
+/** Armes débloquées par niveau dans le salon. Toutes éliminent en un tir. */
+export const WEAPON_DEFS: Record<WeaponId, WeaponDef> = {
+  rayon: { label: 'Rayon', level: 1, cooldown: 1.2, range: 200, pellets: 1, spread: 0, pierce: false, color: 0xff9a4a },
+  grenaille: { label: 'Grenaille', level: 2, cooldown: 1.0, range: 18, pellets: 7, spread: 0.11, pierce: false, color: 0xf3c84a },
+  rafale: { label: 'Rafale', level: 3, cooldown: 0.5, range: 25, pellets: 1, spread: 0.02, pierce: false, color: 0x7fd6ff },
+  precision: { label: 'Précision', level: 4, cooldown: 2.0, range: 200, pellets: 1, spread: 0, pierce: true, color: 0xe67fb0 }
+};
+/** Éliminations cumulées dans le salon pour atteindre chaque niveau. */
+export const LEVEL_XP = [0, 3, 7, 12] as const;
+export const levelFor = (xp: number) => LEVEL_XP.filter(t => xp >= t).length;
 
 export const HATS = ['aucun', 'bonnet', 'casquette', 'chapka', 'casque'] as const;
 export type Hat = typeof HATS[number];
@@ -55,8 +71,10 @@ export interface RoomSettings {
   /** Drapeaux à ramener pour gagner (capture du drapeau). */
   captures: number;
   timeLimitMin: number; abilities: boolean; pickups: boolean;
+  /** Replay de sa mort vue par le tueur ; rallonge la réapparition. */
+  killcam: boolean;
 }
-export const DEFAULT_SETTINGS: RoomSettings = { mode: 'dm', mapId: 'auto', scoreToWin: 25, captures: 3, timeLimitMin: 10, abilities: true, pickups: true };
+export const DEFAULT_SETTINGS: RoomSettings = { mode: 'dm', mapId: 'auto', scoreToWin: 25, captures: 3, timeLimitMin: 10, abilities: true, pickups: true, killcam: true };
 export const SCORE_CHOICES = [10, 25, 50, 0] as const;
 export const CAPTURE_CHOICES = [1, 3, 5, 0] as const;
 export const TEAM_COLORS = [0xd9534f, 0x5b8cff] as const;

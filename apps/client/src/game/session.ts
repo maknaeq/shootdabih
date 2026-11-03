@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CONFIG, DEFAULT_SETTINGS, STREAKS, TEAM_COLORS, TEAM_NAMES, surfaceAt, type FlagState, forwardFromAngles, getMap, groundAt, traceShot, unpackPlayer,
+  CONFIG, DEFAULT_SETTINGS, STREAKS, TEAM_COLORS, TEAM_NAMES, WEAPONS, WEAPON_DEFS, surfaceAt, type FlagState, type PickupState, type WeaponId, forwardFromAngles, getMap, groundAt, traceShotAll, unpackPlayer,
   type Ability, type Input, type LobbyPlayer, type MapData, type NetPlayer, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg
 } from '@sdb/shared';
 import { Pickups, PICKUP_STYLE } from '../render/pickups';
@@ -18,6 +18,11 @@ import { Interpolator } from './interp';
 import { Hud } from '../ui/hud';
 import { lobbyView, type LobbyView } from '../ui/lobby';
 import { h } from '../ui/dom';
+import { Minimap, type MiniDot } from '../render/minimap';
+
+const hexCss = (c: number) => '#' + c.toString(16).padStart(6, '0');
+/** Killcam : durée du replay et morceau de temps rejoué (ms, avant et après l'élimination). */
+const KC_BEFORE = 1800, KC_AFTER = 200, KC_SLOW_FROM = 300;
 
 const STEP = 1 / CONFIG.tickRate;
 
@@ -66,6 +71,23 @@ export class Session {
   private flagState: FlagState[] = [];
   private teamScore: [number, number] = [0, 0];
   private carriers = new Set<string>();
+  private weapon: WeaponId = 'rayon';
+  private weaponSwitchAt = -9;
+  private lastMeleeAt = -1e9;
+  private pickupState: PickupState[] = [];
+  private minimap: Minimap | null = null;
+  /** Dernier tir de chaque joueur (temps local, s) : un ennemi qui tire apparaît sur la mini-map. */
+  private shotAt = new Map<string, number>();
+  /** Mes positions récentes (temps serveur, ms), pour me montrer dans la killcam. */
+  private myHist: Array<{ t: number; x: number; y: number; z: number; yaw: number; pitch: number }> = [];
+  /** Tirs récents reçus (temps serveur, ms), pour les rejouer dans la killcam. */
+  private shotHist: Array<{ t: number; by: string; weapon: WeaponId; from: [number, number, number]; to: Array<[number, number, number]> }> = [];
+  private killcam: { killer: string; tk: number; start: number; shown: Set<object>; fallen: boolean; exec: boolean } | null = null;
+  /** Exécution vue par l'attaquant : caméra à la troisième personne pendant le verrou. */
+  private execView: { start: number; until: number; x: number; y: number; z: number } | null = null;
+  /** Corps qui tombent (exécution) : restent visibles un instant à leur place. */
+  private falling = new Map<string, { until: number; x: number; y: number; z: number; yaw: number }>();
+  private poseUntil = new Map<string, number>();
 
 
   constructor(private root: HTMLElement, private code: string, name: string, private leave: () => void) {
@@ -129,12 +151,22 @@ export class Session {
     this.pickups = new Pickups(this.map);
     this.renderer.scene.add(this.pickups.group);
     if (this.flags) { this.renderer.scene.remove(this.flags.group); this.flags = null; }
+    if (this.map.def.ctf) {
+      const m = this.map;
+      this.flags = new Flags(m.def.ctf!.bases.map(b => { const top = surfaceAt(m, b.x, b.z, 1e6); return { x: b.x, y: Number.isFinite(top) ? top : 0, z: b.z }; }));
+      this.flags.group.visible = false;
+      this.renderer.scene.add(this.flags.group);
+    }
+    if (this.predictor) this.predictor.setMap(this.map); else this.predictor = new Predictor(this.map);
+    if (!this.minimap) { this.minimap = new Minimap(this.map); this.hud.minimapSlot.append(this.minimap.canvas); } else this.minimap.setMap(this.map);
   }
 
   private myAbility(): Ability { return 'aucune'; }
 
   private colorOf(id: string) { return this.players.find(p => p.id === id)?.color ?? 0xf3efe6; }
   private nameOf(id: string) { return this.players.find(p => p.id === id)?.name ?? '?'; }
+  /** Couleur affichée : celle de l'équipe en capture du drapeau, sinon celle de la parka. */
+  private shownColor(id: string) { const p = this.players.find(x => x.id === id); if (!p) return 0xf3efe6; return this.isCtf() && p.team >= 0 ? TEAM_COLORS[p.team] : p.color; }
 
   private onMessage(m: ServerMsg) {
     switch (m.t) {
@@ -176,6 +208,7 @@ export class Session {
         this.loadMap(m.mapId);
         this.hud.setGoal(m.settings.mode === 'ctf' ? 0 : m.settings.scoreToWin);
         this.teamScore = [0, 0]; this.flagState = []; this.carriers.clear();
+        this.weapon = 'rayon'; this.killcam = null; this.execView = null; this.falling.clear(); this.hud.killcam(false);
         if (this.flags) this.flags.group.visible = m.settings.mode === 'ctf';
         this.refreshTeams();
         this.lobby.root.style.display = 'none'; this.hud.root.style.display = '';
@@ -186,7 +219,11 @@ export class Session {
         const others = m.o.map(unpackPlayer);
         this.interp.push(m.time, others);
         const mine = m.me;
-        if (mine) this.myNet = mine;
+        if (mine) {
+          this.myNet = mine;
+          if (mine.weapon && mine.weapon !== this.weapon && performance.now() / 1000 - this.weaponSwitchAt > 0.6) this.weapon = mine.weapon;
+          this.hud.weapons(this.weapon, mine.level ?? 1, mine.xp ?? 0);
+        }
         if (mine && this.predictor) {
           if (mine.alive && this.alive) this.predictor.reconcile(mine, m.ack);
         }
@@ -199,23 +236,54 @@ export class Session {
           this.predictor?.teleport({ x: m.x, y: m.y, z: m.z }, m.yaw, this.myAbility());
           this.input.yaw = m.yaw; this.input.pitch = 0;
           this.hud.setDead(null);
-        } else this.interp.reset(m.id);
+          this.endKillcam();
+        } else { this.interp.reset(m.id); this.falling.delete(m.id); this.avatars.get(m.id)?.setPose('none'); }
         break;
-      case 'shot':
-        if (m.by !== this.me) this.effects.beam(new THREE.Vector3(...m.from), new THREE.Vector3(...m.to), performance.now() / 1000);
+      case 'shot': {
+        this.shotHist.push({ t: this.serverNow(), by: m.by, weapon: m.weapon, from: m.from, to: m.to });
+        this.shotAt.set(m.by, performance.now() / 1000);
+        if (m.by !== this.me && !this.killcam) this.drawShot(m.weapon, m.from, m.to, performance.now() / 1000);
+        break;
+      }
+      case 'melee': if (m.by !== this.me) this.avatars.get(m.by)?.strike(); break;
+      case 'exec': {
+        const now = performance.now() / 1000, until = now + CONFIG.execLockSeconds;
+        if (m.attacker === this.me) {
+          this.execView = { start: now, until, x: m.x, y: m.y, z: m.z };
+          this.meAvatar?.setPose('attack'); this.poseUntil.set(this.me, until);
+          this.hud.announce('Exécution', `${this.nameOf(m.victim)} ne l'a pas vu venir`, now);
+        } else { this.avatars.get(m.attacker)?.setPose('attack'); this.poseUntil.set(m.attacker, until); }
+        this.falling.set(m.victim, { until, x: m.x, y: m.y, z: m.z, yaw: m.yaw });
+        // la victime se voit tomber dans sa killcam, au bon moment du replay
+        if (m.victim !== this.me) this.avatars.get(m.victim)?.setPose('fall');
+        break;
+      }
+      case 'level':
+        if (m.id === this.me) {
+          const w = WEAPONS.find(x => WEAPON_DEFS[x].level === m.level);
+          this.hud.announce(`Niveau ${m.level}`, w ? `Nouvelle arme : ${WEAPON_DEFS[w].label}, touche ${WEAPONS.indexOf(w) + 1}` : 'Continue comme ça', performance.now() / 1000);
+        }
         break;
       case 'kill': {
         const now = performance.now() / 1000;
-        this.hud.kill(this.nameOf(m.killer), this.nameOf(m.victim), m.killer === this.me, now);
+        const label = (id: string) => (id === this.me ? 'Toi' : this.nameOf(id));
+        this.hud.kill({ killer: label(m.killer), victim: label(m.victim), weapon: m.weapon, dist: m.dist, streak: m.streak, mine: m.killer === this.me, me: m.victim === this.me, killerColor: hexCss(this.shownColor(m.killer)), victimColor: hexCss(this.shownColor(m.victim)) }, now);
         const at = m.victim === this.me && this.predictor ? this.predictor.state.pos : this.interp.sample(m.victim, this.serverNow() - CONFIG.interpDelayMs);
-        if (at) this.effects.burst(new THREE.Vector3(at.x, at.y + 1.1, at.z), this.colorOf(m.victim), now);
-        if (m.victim === this.me) { this.alive = false; this.hud.setDead(this.nameOf(m.killer)); }
-        const a = this.avatars.get(m.victim); if (a) a.root.visible = false;
+        if (at && m.weapon !== 'exec') this.effects.burst(new THREE.Vector3(at.x, at.y + 1.1, at.z), this.colorOf(m.victim), now);
+        if (m.victim === this.me) {
+          this.alive = false;
+          if (this.roomSettings.killcam && m.killer !== this.me) {
+            this.killcam = { killer: m.killer, tk: this.serverNow(), start: now, shown: new Set(), fallen: false, exec: m.weapon === 'exec' };
+            const how = m.weapon === 'exec' ? 'par exécution' : m.weapon === 'melee' ? 'au corps à corps' : `au ${WEAPON_DEFS[m.weapon].label.toLowerCase()} à ${m.dist} m`;
+            this.hud.killcam(true, `${this.nameOf(m.killer)} t'a eu ${how}`, 'Réapparition dans un instant');
+          } else this.hud.setDead(this.nameOf(m.killer));
+        }
+        const a = this.avatars.get(m.victim); if (a && m.weapon !== 'exec') a.root.visible = false;
         break;
       }
       case 'scores': this.scoresList = m.list; this.hud.scores(m.list, this.me); break;
       case 'matchEnd':
-        this.state = 'ended'; this.alive = false;
+        this.state = 'ended'; this.alive = false; this.endKillcam(); this.execView = null;
         this.input.unlock(); this.hud.showBoard(false); this.hud.showPrompt(false);
         this.lobby.showEnd(m.list, m.winner, this.me, this.me === this.hostId, m.winnerTeam, m.teamScores);
         this.hud.teams(false);
@@ -226,7 +294,7 @@ export class Session {
         this.clockOffset += (est - this.clockOffset) * 0.3;
         break;
       }
-      case 'pickups': this.pickups?.set(m.list); break;
+      case 'pickups': this.pickups?.set(m.list); this.pickupState = m.list; break;
       case 'flags':
         this.flagState = m.flags; this.teamScore = m.score;
         this.carriers = new Set(m.flags.map(f => f.carrier).filter((x): x is string => !!x));
@@ -271,7 +339,7 @@ export class Session {
   private aim(): { yaw: number; pitch: number } { return { yaw: this.input.yaw, pitch: this.input.pitch }; }
 
   private makeInput(): Input {
-    const active = this.input.locked && this.alive;
+    const active = this.input.locked && this.alive && !this.execView;
     return {
       seq: ++this.seq, dt: STEP,
       fwd: active && this.input.fwd, back: active && this.input.back, left: active && this.input.left, right: active && this.input.right,
@@ -287,16 +355,123 @@ export class Session {
     const renderTime = this.serverNow() - CONFIG.interpDelayMs;
     const aim = this.aim();
     this.conn.send({ t: 'fire', seq: this.seq, yaw: aim.yaw, pitch: aim.pitch, renderTime });
-    // effet immédiat : le serveur confirmera l'élimination
+    // effet immédiat : le serveur confirmera l'élimination (la dispersion de la grenaille est tirée au hasard ici, pour l'image seulement)
+    const w = WEAPON_DEFS[this.weapon];
     const s = this.predictor.state;
     const eye = { x: s.pos.x, y: s.pos.y + CONFIG.eyeHeight, z: s.pos.z };
     const targets = this.players.filter(p => p.id !== this.me).map(p => ({ id: p.id, p: this.interp.sample(p.id, renderTime) }))
       .filter(t => t.p && t.p.alive).map(t => ({ id: t.id, pos: { x: t.p!.x, y: t.p!.y, z: t.p!.z } }));
-    const r = traceShot(this.map, eye, forwardFromAngles(aim.yaw, aim.pitch), targets);
     this.viewmodel.kick();
     this.renderer.camera.updateMatrixWorld(true);
     const from = this.viewmodel.tipWorld(this.tmp).clone();
-    this.effects.beam(from, new THREE.Vector3(r.end.x, r.end.y, r.end.z), now);
+    for (let k = 0; k < w.pellets; k++) {
+      const sy = aim.yaw + (w.spread ? (Math.random() - 0.5) * 2 * w.spread : 0), sp = aim.pitch + (w.spread ? (Math.random() - 0.5) * 1.2 * w.spread : 0);
+      const dir = forwardFromAngles(sy, sp);
+      const r = traceShotAll(this.map, eye, dir, targets, w.range);
+      const d = !w.pierce && r.dists.length ? r.dists[0] : Math.hypot(r.end.x - eye.x, r.end.y - eye.y, r.end.z - eye.z);
+      this.effects.beam(from, new THREE.Vector3(eye.x + dir.x * d, eye.y + dir.y * d, eye.z + dir.z * d), now, w.color, w.pellets > 1);
+    }
+  }
+
+  private drawShot(weapon: WeaponId, from: [number, number, number], to: Array<[number, number, number]>, now: number) {
+    const w = WEAPON_DEFS[weapon] ?? WEAPON_DEFS.rayon, f = new THREE.Vector3(...from);
+    for (const t of to) this.effects.beam(f, new THREE.Vector3(...t), now, w.color, to.length > 1);
+  }
+
+  private melee(now: number) {
+    if (now - this.lastMeleeAt < CONFIG.meleeCooldown) return;
+    this.lastMeleeAt = now;
+    this.viewmodel?.swing();
+    this.conn.send({ t: 'melee', yaw: this.input.yaw, renderTime: this.serverNow() - CONFIG.interpDelayMs });
+  }
+
+  private switchWeapon(req: { slot?: number; step?: number }) {
+    const level = this.myNet?.level ?? 1;
+    const open = WEAPONS.filter(w => WEAPON_DEFS[w].level <= level);
+    let next: WeaponId | undefined;
+    if (req.slot !== undefined) next = WEAPONS[req.slot];
+    else if (req.step) next = open[(open.indexOf(this.weapon) + req.step + open.length) % open.length];
+    if (!next || next === this.weapon) return;
+    if (WEAPON_DEFS[next].level > level) { this.hud.note(`${WEAPON_DEFS[next].label} : niveau ${WEAPON_DEFS[next].level} requis`); return; }
+    this.weapon = next; this.weaponSwitchAt = performance.now() / 1000;
+    this.lastFireAt = Math.max(this.lastFireAt, performance.now() / 1000 - this.fireCooldown() + 0.25);
+    this.conn.send({ t: 'weapon', id: next });
+    this.hud.weapons(next, level, this.myNet?.xp ?? 0);
+  }
+
+  private endKillcam() {
+    if (!this.killcam) return;
+    this.killcam = null;
+    this.hud.killcam(false);
+    this.meAvatar?.setPose('none');
+  }
+
+  /** Temps serveur rejoué : 1,5 s à vitesse normale, puis ralenti autour du coup fatal. */
+  private killcamTime(now: number) {
+    const k = this.killcam!, e = (now - k.start) * 1000;
+    const fast = KC_BEFORE - KC_SLOW_FROM;
+    return e < fast ? k.tk - KC_BEFORE + e : k.tk - KC_SLOW_FROM + (e - fast) * 0.5;
+  }
+
+  private myPosAt(t: number) {
+    const h = this.myHist;
+    if (!h.length) return null;
+    for (let i = h.length - 1; i >= 0; i--) if (h[i].t <= t) return h[i];
+    return h[0];
+  }
+
+  private killcamFrame(now: number, dt: number) {
+    const k = this.killcam!, T = this.killcamTime(now), cam = this.renderer.camera;
+    const kp = this.interp.sample(k.killer, T - CONFIG.interpDelayMs);
+    if (kp) {
+      cam.position.set(kp.x, kp.y + CONFIG.eyeHeight, kp.z);
+      cam.rotation.set(kp.pitch, kp.yaw, 0);
+    }
+    for (const [id, a] of this.avatars) {
+      if (id === k.killer) { a.root.visible = false; continue; }
+      const p = this.interp.sample(id, T - CONFIG.interpDelayMs);
+      a.root.visible = !!p && p.alive;
+      if (p) { a.root.position.set(p.x, p.y, p.z); a.update(dt, p.speed, p.yaw, p.pitch); }
+    }
+    const me = this.myPosAt(T - CONFIG.interpDelayMs);
+    if (this.meAvatar && me) {
+      if (T >= k.tk && !k.fallen) { k.fallen = true; this.meAvatar.setPose('fall'); if (!k.exec) this.effects.burst(new THREE.Vector3(me.x, me.y + 1.1, me.z), this.colorOf(this.me), now); }
+      this.meAvatar.root.visible = true;
+      this.meAvatar.root.position.set(me.x, me.y, me.z);
+      this.meAvatar.update(dt, 0, me.yaw, me.pitch);
+    }
+    for (const sh of this.shotHist) {
+      if (sh.by === k.killer && !k.shown.has(sh) && sh.t <= T && sh.t > T - 400) { k.shown.add(sh); this.drawShot(sh.weapon, sh.from, sh.to, now); }
+    }
+    this.viewmodel?.setVisible(false);
+    if (now - k.start > (KC_BEFORE - KC_SLOW_FROM) / 1000 + (KC_SLOW_FROM + KC_AFTER) / 500 + 0.6) this.endKillcam();
+  }
+
+  /** Exécution vue par l'attaquant : la caméra sort et tourne autour de la scène. */
+  private execFrame(now: number, pos: { x: number; y: number; z: number }) {
+    const e = this.execView!, cam = this.renderer.camera, k = (now - e.start) / (e.until - e.start);
+    const cx = (pos.x + e.x) / 2, cz = (pos.z + e.z) / 2, a = this.input.yaw + Math.PI * 0.6 + k * 0.9, R = 3.6;
+    cam.position.set(cx + Math.sin(a) * R, pos.y + 1.9, cz + Math.cos(a) * R);
+    cam.lookAt(cx, pos.y + 1, cz);
+    this.viewmodel?.setVisible(false);
+    if (this.meAvatar) { this.meAvatar.root.visible = true; this.meAvatar.root.position.set(pos.x, pos.y, pos.z); this.meAvatar.update(1 / 60, 0, this.input.yaw, 0); }
+  }
+
+  private drawMinimap(now: number, me: { x: number; y: number; z: number }) {
+    if (!this.minimap || !this.map) return;
+    const dots: MiniDot[] = [];
+    const rt = this.serverNow() - CONFIG.interpDelayMs, mine = this.myTeam(), ctf = this.isCtf();
+    for (const p of this.players) {
+      if (p.id === this.me) continue;
+      const s = this.interp.sample(p.id, rt);
+      if (!s || !s.alive) continue;
+      const mate = ctf && p.team === mine;
+      if (mate) dots.push({ x: s.x, z: s.z, color: hexCss(TEAM_COLORS[p.team]), kind: 'mate' });
+      else if (now - (this.shotAt.get(p.id) ?? -9) < 2.5) dots.push({ x: s.x, z: s.z, color: ctf && p.team >= 0 ? hexCss(TEAM_COLORS[p.team]) : '#d9534f', kind: 'enemy' });
+    }
+    if (ctf) for (const f of this.flagState) dots.push({ x: f.x, z: f.z, color: hexCss(TEAM_COLORS[f.team]), kind: 'flag' });
+    for (const st of this.pickupState) { const sp = this.map.pickups[st.i]; if (st.active && sp) dots.push({ x: sp.x, z: sp.z, color: PICKUP_STYLE[st.kind] ? '#' + PICKUP_STYLE[st.kind].color.toString(16).padStart(6, '0') : '#f3efe6', kind: 'pickup' }); }
+    this.minimap.draw(now, { ...me, yaw: this.input.yaw }, dots);
   }
 
   private isCtf() { return this.roomSettings.mode === 'ctf' && this.state !== 'lobby'; }
@@ -331,7 +506,7 @@ export class Session {
 
   private fireCooldown() {
     const over = this.myNet && this.myNet.overchargeUntil > this.serverNow();
-    return CONFIG.fireCooldown * (over ? CONFIG.overchargeFactor : 1);
+    return WEAPON_DEFS[this.weapon].cooldown * (over ? CONFIG.overchargeFactor : 1);
   }
 
   private hudBuffs() {
@@ -392,23 +567,39 @@ export class Session {
         if (this.alive) { const i = this.makeInput(); this.predictor.apply(i); this.outbox.push(i); }
       }
       if (this.outbox.length >= 2 || (this.outbox.length && now - this.lastSend > 0.05)) { this.conn.send({ t: 'input', inputs: this.outbox.splice(0, 30) }); this.lastSend = now; }
-      if (this.input.takeFire() && this.alive && this.input.locked) this.fire(now);
+      const locked = !!this.myNet?.lockedUntil && this.myNet.lockedUntil > this.serverNow();
+      const canAct = this.alive && this.input.locked && !this.execView;
+      if (this.input.takeFire() && canAct && !locked) this.fire(now);
+      if (this.input.takeMelee() && canAct && !locked) this.melee(now);
+      const wreq = this.input.takeWeapon(); if (wreq && this.alive) this.switchWeapon(wreq);
       const pos = this.predictor.renderPos(dt);
       const cam = this.renderer.camera;
       const s = this.predictor.state;
+      if (this.alive) { this.myHist.push({ t: this.serverNow(), x: pos.x, y: pos.y, z: pos.z, yaw: this.input.yaw, pitch: this.input.pitch }); while (this.myHist.length && this.myHist[0].t < this.serverNow() - 4000) this.myHist.shift(); }
+      while (this.shotHist.length && this.shotHist[0].t < this.serverNow() - 4000) this.shotHist.shift();
+      if (this.execView && now > this.execView.until) { this.execView = null; this.meAvatar?.setPose('none'); }
       cam.position.set(pos.x, pos.y + CONFIG.eyeHeight, pos.z);
       cam.rotation.set(this.input.pitch, this.input.yaw, 0);
       const dashBoost = s.time < s.dashUntil + 0.3 || s.time < s.padUntil ? 12 : 0;
       const targetFov = this.renderer.baseFov + dashBoost;
       if (Math.abs(cam.fov - targetFov) > 0.05) { cam.fov += (targetFov - cam.fov) * Math.min(1, dt * 10); cam.updateProjectionMatrix(); }
-      this.viewmodel?.setVisible(this.alive);
+      this.viewmodel?.setVisible(this.alive && !this.execView);
       this.viewmodel?.update(dt, now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.min(1, Math.hypot(s.vel.x, s.vel.z) / CONFIG.runSpeed));
       const rt = this.serverNow() - CONFIG.interpDelayMs;
+      for (const [id, until] of this.poseUntil) if (now > until) { this.poseUntil.delete(id); if (id !== this.me && !this.falling.has(id)) this.avatars.get(id)?.setPose('none'); }
       for (const [id, a] of this.avatars) {
+        const f = this.falling.get(id);
+        if (f) {
+          if (now > f.until + 0.4) { this.falling.delete(id); a.setPose('none'); this.effects.burst(new THREE.Vector3(f.x, f.y + 0.5, f.z), this.colorOf(id), now); }
+          else { a.root.visible = true; a.root.position.set(f.x, f.y, f.z); a.update(dt, 0, f.yaw, 0); continue; }
+        }
         const p = this.interp.sample(id, rt);
         a.root.visible = !!p && p.alive;
         if (p) { a.root.position.set(p.x, p.y, p.z); a.update(dt, p.speed, p.yaw, p.pitch); }
       }
+      if (this.killcam) this.killcamFrame(now, dt);
+      else if (this.execView) this.execFrame(now, pos);
+      this.drawMinimap(now, pos);
       this.hud.update(now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.max(0, s.dashReadyAt - s.time), this.endsAt ? (this.endsAt - this.serverNow()) / 1000 : Infinity);
       this.hudBuffs();
       const ab = s.ability, left = this.myNet ? (this.myNet.abilityUntil - this.serverNow()) / 1000 : 0;
@@ -416,7 +607,7 @@ export class Session {
     } else if (this.map) {
       this.lobbyScene(dt, now);
     }
-    if (this.meAvatar) this.meAvatar.root.visible = !playing && !!this.map;
+    if (this.meAvatar && !this.killcam && !this.execView) this.meAvatar.root.visible = !playing && !!this.map;
     this.world?.update(now);
     this.pickups?.update(now);
     if (this.flags && this.flags.group.visible) {

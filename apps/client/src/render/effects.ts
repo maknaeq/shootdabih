@@ -4,7 +4,7 @@ interface Beam { group: THREE.Group; layers: THREE.Mesh[]; born: number }
 interface Burst { mesh: THREE.InstancedMesh; vel: THREE.Vector3[]; spin: THREE.Vector3[]; origin: THREE.Vector3; born: number }
 
 const BEAM_LIFE = 0.42, BURST_LIFE = 1, BURST_N = 26;
-const LAYERS: Array<[number, number, number]> = [[0.025, 0xffffff, 1], [0.09, 0xff9a4a, 0.55], [0.22, 0xff9a4a, 0.15]];
+const LAYERS: Array<[number, number | null, number]> = [[0.025, 0xffffff, 1], [0.09, null, 0.55], [0.22, null, 0.15]];
 
 /** Rayons et éclats d'élimination. */
 export class Effects {
@@ -19,14 +19,16 @@ export class Effects {
 
   constructor(private scene: THREE.Scene) {}
 
-  beam(from: THREE.Vector3, to: THREE.Vector3, now: number) {
+  /** Un rayon de from à to ; color = couleur de l'arme ; thin pour les plombs de la grenaille. */
+  beam(from: THREE.Vector3, to: THREE.Vector3, now: number, color = 0xff9a4a, thin = false) {
     const group = new THREE.Group();
     const dir = this.tmp.subVectors(to, from), len = dir.length();
     group.position.addVectors(from, to).multiplyScalar(0.5);
     group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
     group.scale.set(1, len, 1);
-    const layers = LAYERS.map(([r, c, op]) => {
-      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 8, 1, true), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    const layers = LAYERS.map(([r0, c, op]) => {
+      const r = thin ? r0 * 0.5 : r0;
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 1, 8, 1, true), new THREE.MeshBasicMaterial({ color: c ?? color, transparent: true, opacity: op, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
       m.userData.op = op; group.add(m); return m;
     });
     this.scene.add(group);

@@ -25,6 +25,9 @@ export class Avatar {
   private armR: THREE.Object3D | null = null;
   private hats: Partial<Record<Hat, THREE.Object3D>> | null = null;
   private phase = 0;
+  private strikeT = 0;
+  /** Pose forcée pendant une exécution : 'none', 'attack' (penché, bras en avant) ou 'fall' (s'effondre). */
+  private pose: { kind: 'none' | 'attack' | 'fall'; t: number } = { kind: 'none', t: 0 };
   private hatGroup = new THREE.Group();
   private bubble: THREE.Mesh;
   private parkaMat: THREE.MeshPhongMaterial;
@@ -109,10 +112,32 @@ export class Avatar {
     if (hat === 'casque') { const g = new THREE.SphereGeometry(0.4, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2); m(g, 0xe8c23a, 0, 1.76, -0.02); m(new THREE.BoxGeometry(0.12, 0.08, 0.1), 0xf3efe6, 0, 2.02, 0.3); }
   }
 
+  /** Coup de crosse vu par les autres. */
+  strike() { this.strikeT = 1; }
+  setPose(kind: 'none' | 'attack' | 'fall') { this.pose = { kind, t: 0 }; if (kind === 'none') { this.body.rotation.set(0, 0, 0); this.body.position.set(0, 0, 0); } }
+
   /** speed : vitesse horizontale, pour animer la marche. */
   update(dt: number, speed: number, yaw: number, pitch = 0) {
     this.root.rotation.y = yaw + Math.PI;
-    if (this.armR) this.armR.rotation.x = -pitch * 0.8;
+    this.strikeT = Math.max(0, this.strikeT - dt / 0.35);
+    const sw = Math.sin(this.strikeT * Math.PI);
+    if (this.armR) { this.armR.rotation.x = -pitch * 0.8 - sw * 1.1; this.armR.rotation.y = sw * 0.6; }
+    if (this.pose.kind !== 'none') {
+      this.pose.t += dt;
+      const t = this.pose.t;
+      if (this.pose.kind === 'fall') {
+        // genoux puis chute en avant
+        const k = Math.min(1, t / 0.8), e = k * k * (3 - 2 * k);
+        this.body.rotation.x = e * 1.45; this.body.position.y = -e * 0.35;
+      } else {
+        const k = Math.min(1, t / 0.25);
+        this.body.rotation.x = 0.25 * k;
+        const hit = Math.max(0, Math.sin(Math.min(1, t / 0.6) * Math.PI * 2));
+        if (this.armR) this.armR.rotation.x = -1.2 * k - hit * 0.6;
+      }
+      this.legL.rotation.x = this.legR.rotation.x = 0;
+      return;
+    }
     this.phase += dt * Math.min(speed, 12) * 1.3;
     const k = Math.min(1, speed / 6);
     this.legL.rotation.x = Math.sin(this.phase) * 0.6 * k;

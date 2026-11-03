@@ -8,6 +8,7 @@ export class Viewmodel {
   readonly tip: THREE.Object3D;
   private base = new THREE.Vector3(0.24, -0.25, -0.5);
   private recoil = 0;
+  private swingT = 0;
   private coils: THREE.Object3D[] = [];
 
   constructor(camera: THREE.Camera, sleeveColor: number) {
@@ -44,12 +45,18 @@ export class Viewmodel {
   }
 
   kick() { this.recoil = 1; }
+  /** Coup de crosse : l'arme part en avant et sur la gauche, puis revient. */
+  swing() { this.swingT = 1; }
 
   update(dt: number, t: number, charge: number, moving: number) {
     this.recoil *= Math.exp(-dt * 7);
     const bob = Math.sin(t * 9) * 0.004 * moving;
     this.group.position.set(this.base.x + Math.sin(t * 4.5) * 0.003 * moving, this.base.y + Math.abs(bob) - this.recoil * 0.015, this.base.z + this.recoil * 0.07);
-    this.group.rotation.x = this.recoil * 0.22;
+    this.swingT = Math.max(0, this.swingT - dt / 0.4);
+    const s = Math.sin((1 - this.swingT) * Math.PI) * (this.swingT > 0 ? 1 : 0);
+    this.group.position.x -= s * 0.16; this.group.position.z -= s * 0.22; this.group.position.y += s * 0.04;
+    this.group.rotation.x = this.recoil * 0.22 - s * 0.35;
+    this.group.rotation.z = s * 0.9;
     this.tip.scale.setScalar(0.4 + charge * 0.9);
     const glow = charge >= 1 ? 1 + Math.sin(t * 8) * 0.08 : 1;
     this.coils.forEach(c => c.scale.set(glow, 1, glow));

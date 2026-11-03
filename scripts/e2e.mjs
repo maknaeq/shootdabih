@@ -89,6 +89,15 @@ try {
   check((await b.evaluate(() => window.__sdb.__shots)) === 1, 'le tir d’Alice arrive chez Bob');
   await a.screenshot({ path: `${shots}/e2e-jeu.png` });
 
+  // HUD : mini-map, armes, killfeed ; puis la killcam chez Bob (élimination simulée côté client)
+  const hud = await b.evaluate(() => ({ map: !!document.querySelector('.hud .minimap'), weapons: document.querySelectorAll('.hud .weapons .w').length }));
+  check(hud.map && hud.weapons === 4, `mini-map affichée et ${hud.weapons} armes dans le HUD`);
+  await b.evaluate(() => { const s = window.__sdb; const other = s.players.find(p => p.id !== s.me).id; s.onMessage({ t: 'kill', killer: other, victim: s.me, weapon: 'rayon', dist: 14, streak: 3 }); });
+  await sleep(900);
+  const kc = await b.evaluate(() => ({ on: !!window.__sdb.killcam, feed: document.querySelector('.hud .feed li')?.textContent ?? '' }));
+  check(kc.on && kc.feed.includes('14 m'), `killcam lancée et killfeed précis (« ${kc.feed} »)`);
+  await b.screenshot({ path: `${shots}/e2e-killcam.png` });
+
   await browser.close();
   console.log('\nTout est bon.');
 } catch (e) {

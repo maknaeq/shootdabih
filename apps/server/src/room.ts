@@ -1,5 +1,5 @@
 import {
-  ABILITIES, BONUS_KINDS, CONFIG, DEFAULT_SETTINGS, FLAG_RETURN_SECONDS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
+  ABILITIES, BONUS_KINDS, CONFIG, WEAPON_DEFS, levelFor, segmentBlocked, type WeaponId, DEFAULT_SETTINGS, FLAG_RETURN_SECONDS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
   dist, mapSupports, surfaceAt, type FlagState,
   chooseSpawn, cleanName, packPlayer, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
   type Ability, type ClientMsg, type Hat, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PickupKind, type PickupState,
@@ -20,6 +20,11 @@ interface Player {
   face: string;
   team: number;
   captures: number;
+  weapon: WeaponId;
+  /** Éliminations cumulées dans le salon : elles débloquent les armes. */
+  xp: number;
+  lastMeleeAt: number;
+  lockedUntil: number;
   send(m: ServerMsg): void;
   state: PlayerState;
   alive: boolean;
@@ -89,7 +94,7 @@ export class Room {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = PARKA_COLORS.find(c => !used.has(c)) ?? PARKA_COLORS[0];
     const p: Player = {
-      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', team: 0, captures: 0, send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
+      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', team: 0, captures: 0, weapon: 'rayon', xp: 0, lastMeleeAt: -1e9, lockedUntil: 0, send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
       kills: 0, deaths: 0, streak: 0, bestStreak: 0, lastFireAt: -1e9, queue: [], ack: -1, history: [],
       overchargeUntil: 0, pierceUntil: 0, shieldBuffUntil: 0, shieldAbilityUntil: 0, lastAbilityUse: -1
     };
@@ -143,6 +148,10 @@ export class Room {
         this.settings = msg.settings;
         this.broadcastLobby();
         break;
+      case 'weapon':
+        if (levelFor(p.xp) >= WEAPON_DEFS[msg.id].level) p.weapon = msg.id;
+        break;
+      case 'melee': this.melee(p, msg.yaw, msg.renderTime); break;
       case 'face':
         p.face = msg.data;
         this.broadcast({ t: 'face', id: p.id, data: p.face });
@@ -223,6 +232,7 @@ export class Room {
           continue;
         }
         this.applyLoadout(p);
+        if (now < p.lockedUntil) { if (p.queue.length) { p.ack = p.queue[p.queue.length - 1].seq; p.queue = []; } p.history.push({ t: now, pos: { ...p.state.pos } }); continue; }
         // une entrée par pas en régime normal, un peu plus pour rattraper un retard : le mouvement reste régulier
         const n = Math.min(p.queue.length, p.queue.length > 8 ? 4 : p.queue.length > 3 ? 2 : 1);
         for (const i of p.queue.splice(0, n)) { p.state = stepPlayer(p.state, i, this.map); p.ack = i.seq; }
@@ -360,42 +370,87 @@ export class Room {
     return p.state.pos;
   }
 
-  private fireCooldownMs(p: Player, now: number) { return CONFIG.fireCooldown * 1000 * (now < p.overchargeUntil ? CONFIG.overchargeFactor : 1); }
+  private fireCooldownMs(p: Player, now: number) { return WEAPON_DEFS[p.weapon].cooldown * 1000 * (now < p.overchargeUntil ? CONFIG.overchargeFactor : 1); }
 
   private fire(p: Player, yaw: number, pitch: number, renderTime: number) {
     if (this.state !== 'playing' || !p.alive) return;
     const now = this.clock.now();
-    if (now - p.lastFireAt < this.fireCooldownMs(p, now) - 60) return;
+    if (now < p.lockedUntil || now - p.lastFireAt < this.fireCooldownMs(p, now) - 60) return;
     p.lastFireAt = now;
+    const w = WEAPON_DEFS[p.weapon];
     const rewindTo = Math.max(now - CONFIG.maxRewindMs - CONFIG.interpDelayMs, Math.min(now, renderTime));
     const targets = [...this.players.values()].filter(q => this.enemies(p, q) && q.alive).map(q => ({ id: q.id, pos: this.posAt(q, rewindTo) }));
     const origin = eyeOf(p.state);
-    const r = traceShotAll(this.map, origin, forwardFromAngles(yaw, pitch), targets);
-    const pierce = now < p.pierceUntil;
-    const hits = pierce ? r.hits : r.hits.slice(0, 1);
-    const end = !pierce && hits.length ? targets.find(t => t.id === hits[0])!.pos : null;
-    const to = end ? { x: end.x, y: end.y + 1.1, z: end.z } : r.end;
-    this.broadcast({ t: 'shot', by: p.id, from: [origin.x, origin.y, origin.z], to: [to.x, to.y, to.z] });
+    const pierce = w.pierce || now < p.pierceUntil;
+    const victims = new Map<string, number>();
+    const ends: Array<[number, number, number]> = [];
+    for (let k = 0; k < w.pellets; k++) {
+      const sy = yaw + (w.spread ? (this.rand() - 0.5) * 2 * w.spread : 0), sp = pitch + (w.spread ? (this.rand() - 0.5) * 2 * w.spread * 0.6 : 0);
+      const r = traceShotAll(this.map, origin, forwardFromAngles(sy, sp), targets, w.range);
+      const n = pierce ? r.hits.length : Math.min(1, r.hits.length);
+      for (let h = 0; h < n; h++) if (!victims.has(r.hits[h])) victims.set(r.hits[h], r.dists[h]);
+      if (!pierce && r.hits.length) { const t = targets.find(x => x.id === r.hits[0])!.pos; ends.push([t.x, t.y + 1.1, t.z]); }
+      else ends.push([r.end.x, r.end.y, r.end.z]);
+    }
+    this.broadcast({ t: 'shot', by: p.id, weapon: p.weapon, from: [origin.x, origin.y, origin.z], to: ends });
     let killed = false;
-    for (const id of hits) {
+    for (const [id, d] of victims) {
       const v = this.players.get(id)!;
       if (now < v.shieldAbilityUntil) { v.shieldAbilityUntil = 0; this.broadcast({ t: 'shieldHit', id: v.id, by: p.id }); continue; }
       if (now < v.shieldBuffUntil) { v.shieldBuffUntil = 0; this.broadcast({ t: 'shieldHit', id: v.id, by: p.id }); continue; }
-      this.kill(p, v, now);
+      this.kill(p, v, now, p.weapon, d);
       killed = true;
     }
-    if (killed) {
-      this.broadcast({ t: 'scores', list: this.scores() });
-      if (this.settings.mode === 'dm' && this.settings.scoreToWin > 0 && p.kills >= this.settings.scoreToWin) this.endMatch();
-    }
+    if (killed) this.afterKill(p);
   }
 
-  private kill(p: Player, v: Player, now: number) {
+  /** Corps à corps : la cible la plus proche dans un cône devant soi. Par derrière, c'est une exécution. */
+  private melee(p: Player, yaw: number, renderTime: number) {
+    if (this.state !== 'playing' || !p.alive) return;
+    const now = this.clock.now();
+    if (now < p.lockedUntil || now - p.lastMeleeAt < CONFIG.meleeCooldown * 1000 - 60) return;
+    p.lastMeleeAt = now;
+    const rewindTo = Math.max(now - CONFIG.maxRewindMs - CONFIG.interpDelayMs, Math.min(now, renderTime));
+    const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+    let best: { v: Player; d: number; pos: Vec3 } | null = null;
+    for (const q of this.players.values()) {
+      if (!this.enemies(p, q) || !q.alive) continue;
+      const pos = this.posAt(q, rewindTo);
+      const dx = pos.x - p.state.pos.x, dz = pos.z - p.state.pos.z, d = Math.hypot(dx, dz);
+      if (d > CONFIG.meleeRange || Math.abs(pos.y - p.state.pos.y) > 1.6) continue;
+      if (d > 0.4 && (dx * fx + dz * fz) / d < Math.cos(CONFIG.meleeCone / 2)) continue;
+      const eye = eyeOf(p.state);
+      if (segmentBlocked(this.map, eye, { x: pos.x, y: pos.y + 1.1, z: pos.z }) !== null) continue;
+      if (!best || d < best.d) best = { v: q, d, pos };
+    }
+    if (!best) { this.broadcast({ t: 'melee', by: p.id }); return; }
+    const v = best.v;
+    // dans le dos : la victime regarde à l'opposé de l'attaquant
+    const vfx = -Math.sin(v.state.yaw), vfz = -Math.cos(v.state.yaw);
+    const ax = p.state.pos.x - v.state.pos.x, az = p.state.pos.z - v.state.pos.z, al = Math.hypot(ax, az) || 1;
+    const exec = (vfx * ax + vfz * az) / al < -0.4;
+    if (exec) {
+      p.lockedUntil = now + CONFIG.execLockSeconds * 1000;
+      this.broadcast({ t: 'exec', attacker: p.id, victim: v.id, x: v.state.pos.x, y: v.state.pos.y, z: v.state.pos.z, yaw: Math.atan2(-ax, -az) + Math.PI });
+    } else this.broadcast({ t: 'melee', by: p.id });
+    this.kill(p, v, now, exec ? 'exec' : 'melee', best.d);
+    this.afterKill(p);
+  }
+
+  private afterKill(p: Player) {
+    this.broadcast({ t: 'scores', list: this.scores() });
+    if (this.settings.mode === 'dm' && this.settings.scoreToWin > 0 && p.kills >= this.settings.scoreToWin) this.endMatch();
+  }
+
+  private kill(p: Player, v: Player, now: number, weapon: WeaponId | 'melee' | 'exec', dist: number) {
     const victimStreak = v.streak;
     this.dropFlagOf(v);
-    v.alive = false; v.respawnAt = now + CONFIG.respawnDelay * 1000; v.deaths++; v.streak = 0;
+    v.alive = false; v.respawnAt = now + (this.settings.killcam ? CONFIG.killcamRespawnDelay : CONFIG.respawnDelay) * 1000; v.deaths++; v.streak = 0;
     p.kills++; p.streak++; p.bestStreak = Math.max(p.bestStreak, p.streak);
-    this.broadcast({ t: 'kill', killer: p.id, victim: v.id });
+    this.broadcast({ t: 'kill', killer: p.id, victim: v.id, weapon, dist: Math.round(dist), streak: p.streak });
+    const before = levelFor(p.xp); p.xp++;
+    const after = levelFor(p.xp);
+    if (after > before) this.broadcast({ t: 'level', id: p.id, level: after, xp: p.xp });
     if (STREAKS[p.streak]) this.broadcast({ t: 'streak', id: p.id, n: p.streak });
     if (victimStreak >= 3) this.broadcast({ t: 'shutdown', killer: p.id, victim: v.id, n: victimStreak });
   }
@@ -418,7 +473,7 @@ export class Room {
 
   scores(): ScoreLine[] {
     return [...this.players.values()]
-      .map(p => ({ id: p.id, name: p.name, color: p.color, kills: p.kills, deaths: p.deaths, team: p.team, captures: p.captures }))
+      .map(p => ({ id: p.id, name: p.name, color: p.color, kills: p.kills, deaths: p.deaths, team: p.team, captures: p.captures, level: levelFor(p.xp) }))
       .sort((a, b) => b.captures - a.captures || b.kills - a.kills || a.deaths - b.deaths);
   }
 
@@ -434,7 +489,7 @@ export class Room {
       abilityReadyAt: p.state.abilityReadyAt, abilityUsedAt: p.state.abilityUsedAt,
       overchargeUntil: p.overchargeUntil, pierceUntil: p.pierceUntil,
       shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak,
-      ability: p.state.ability, abilityUntil: p.abilityUntil
+      ability: p.state.ability, abilityUntil: p.abilityUntil, weapon: p.weapon, level: levelFor(p.xp), xp: p.xp, lockedUntil: p.lockedUntil
     }));
     const carriers = new Set(this.flags.map(f => f.carrier).filter(Boolean));
     const packed = players.map(n => packPlayer(n, carriers.has(n.id)));

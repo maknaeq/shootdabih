@@ -37,13 +37,13 @@ export interface ShotTarget { id: string; pos: Vec3 }
 export interface ShotResult { hitId: string | null; end: Vec3; distance: number }
 
 /** Rayon perçant : tous les joueurs touchés avant le premier mur, du plus proche au plus loin. */
-export function traceShotAll(map: Pick<MapData, 'boxes'>, origin: Vec3, dir: Vec3, targets: ShotTarget[]): { hits: string[]; end: Vec3 } {
+export function traceShotAll(map: Pick<MapData, 'boxes'>, origin: Vec3, dir: Vec3, targets: ShotTarget[], range = SHOT_RANGE): { hits: string[]; dists: number[]; end: Vec3 } {
   const far = add(origin, scale(dir, SHOT_RANGE));
   const wallT = segmentBlocked({ boxes: map.boxes, ramps: [] }, origin, far);
-  const maxD = wallT === null ? SHOT_RANGE : wallT * SHOT_RANGE;
-  const hits = targets.map(t => ({ id: t.id, d: rayCapsule(origin, dir, t.pos, CONFIG.hitRadius, CONFIG.hitHeight) }))
-    .filter((h): h is { id: string; d: number } => h.d !== null && h.d < maxD).sort((a, b) => a.d - b.d).map(h => h.id);
-  return { hits, end: add(origin, scale(dir, maxD)) };
+  const maxD = Math.min(range, wallT === null ? SHOT_RANGE : wallT * SHOT_RANGE);
+  const found = targets.map(t => ({ id: t.id, d: rayCapsule(origin, dir, t.pos, CONFIG.hitRadius, CONFIG.hitHeight) }))
+    .filter((h): h is { id: string; d: number } => h.d !== null && h.d < maxD).sort((a, b) => a.d - b.d);
+  return { hits: found.map(h => h.id), dists: found.map(h => h.d), end: add(origin, scale(dir, maxD)) };
 }
 
 /** Trace le rayon : renvoie le joueur le plus proche touché avant le premier mur. */

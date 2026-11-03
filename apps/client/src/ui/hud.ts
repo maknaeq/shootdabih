@@ -1,10 +1,16 @@
-import { CONFIG, type ScoreLine } from '@sdb/shared';
+import { CONFIG, LEVEL_XP, WEAPONS, WEAPON_DEFS, type ScoreLine, type WeaponId } from '@sdb/shared';
 import { h } from './dom';
 import { scoreTable } from './lobby';
 
 export class Hud {
   readonly root: HTMLElement;
   private feed = h('ol', { class: 'feed' });
+  private notes = h('ol', { class: 'notes' });
+  private weaponsEl = h('div', { class: 'weapons' });
+  private levelEl = h('div', { class: 'level' });
+  private lastWeapons = '';
+  private killcamEl = h('div', { class: 'killcam', style: 'display:none' });
+  readonly minimapSlot = h('div', { class: 'minimap-slot' });
   private score = h('b', {}, '00');
   private timer = h('div', { class: 'timer' });
   private hit = h('div', { class: 'hit' });
@@ -31,14 +37,14 @@ export class Hud {
 
   constructor(settings: HTMLElement) {
     this.root = h('div', { class: 'hud' },
-      this.shieldEl, this.teamBar, this.carryEl, this.feed, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
+      this.shieldEl, this.teamBar, this.carryEl, this.notes, this.feed, this.minimapSlot, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
       h('div', { class: 'cross' }), this.hit, this.pop,
-      h('div', { class: 'bottom' }, this.cd, h('div', { class: 'lbl' }, h('span', {}, 'Rayon'), this.dash)),
-      this.dead);
+      h('div', { class: 'bottom' }, this.weaponsEl, this.cd, h('div', { class: 'lbl' }, this.levelEl, this.dash)),
+      this.dead, this.killcamEl);
     this.board = h('div', { class: 'overlay', style: 'display:none' }, h('div', { class: 'board' }, h('h2', {}, 'Scores'), this.boardBody));
     this.prompt = h('div', { class: 'overlay', style: 'display:none' }, h('div', { class: 'board' },
       h('h2', {}, 'Clique pour jouer'),
-      h('p', { class: 'hint', style: 'margin:0' }, 'ZQSD ou WASD pour bouger, souris pour viser, clic pour tirer, Espace pour sauter, Maj ou clic droit pour le dash, E pour la capacité, Tab pour les scores, Échap pour revenir ici.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'ZQSD ou WASD pour bouger, souris pour viser, clic pour tirer, Espace pour sauter, Maj ou clic droit pour le dash, V pour le coup au corps à corps (dans le dos : exécution), 1 à 4 ou la molette pour changer d’arme, E pour la capacité, Tab pour les scores, Échap pour revenir ici.'),
       settings));
   }
 
@@ -60,9 +66,9 @@ export class Hud {
   }
 
   note(text: string) {
-    const li = h('li', {}, h('span', { class: 'me' }, text));
-    this.feed.prepend(li);
-    while (this.feed.children.length > 5) this.feed.lastElementChild?.remove();
+    const li = h('li', {}, text);
+    this.notes.prepend(li);
+    while (this.notes.children.length > 4) this.notes.lastElementChild?.remove();
     setTimeout(() => li.remove(), 6000);
   }
 
@@ -85,12 +91,39 @@ export class Hud {
     this.abilityEl.replaceChildren(...(name ? [passive ? '' : h('kbd', {}, 'E'), document.createTextNode(t)] : []));
   }
 
-  kill(killer: string, victim: string, mine: boolean, now: number) {
-    const li = h('li', {}, h('span', { class: mine ? 'me' : '' }, killer), h('i', {}), h('span', {}, victim));
-    this.feed.prepend(li);
-    while (this.feed.children.length > 4) this.feed.lastElementChild?.remove();
-    setTimeout(() => li.remove(), 6000);
-    if (mine) this.hitAt = now;
+  /** Killfeed en bas à gauche : le plus récent en bas, avec l'arme, la distance et la série du tueur. */
+  kill(k: { killer: string; victim: string; weapon: string; dist: number; streak: number; mine: boolean; me: boolean; killerColor: string; victimColor: string }, now: number) {
+    const how = k.weapon === 'exec' ? 'Exécution' : k.weapon === 'melee' ? 'Corps à corps' : WEAPON_DEFS[k.weapon as WeaponId]?.label ?? k.weapon;
+    const li = h('li', { class: (k.mine ? 'mine' : '') + (k.me ? ' died' : '') + (k.weapon === 'exec' ? ' exec' : '') },
+      h('span', { class: 'who', style: `--c:${k.killerColor}` }, k.killer),
+      h('span', { class: 'how' }, how, k.weapon === 'melee' || k.weapon === 'exec' ? '' : h('small', {}, `${k.dist} m`)),
+      h('span', { class: 'who', style: `--c:${k.victimColor}` }, k.victim),
+      k.streak >= 3 ? h('small', { class: 'streak' }, `série ${k.streak}`) : '');
+    this.feed.append(li);
+    while (this.feed.children.length > 6) this.feed.firstElementChild?.remove();
+    setTimeout(() => li.remove(), 7000);
+    if (k.mine) this.hitAt = now;
+  }
+
+  /** Armes débloquées par le niveau (1 à 4), l'arme en main en évidence. */
+  weapons(current: WeaponId, level: number, xp: number) {
+    const key = current + level + ':' + xp;
+    if (key === this.lastWeapons) return;
+    this.lastWeapons = key;
+    this.weaponsEl.replaceChildren(...WEAPONS.map((w, i) => {
+      const d = WEAPON_DEFS[w], open = level >= d.level;
+      return h('span', { class: 'w' + (w === current ? ' on' : '') + (open ? '' : ' locked'), style: `--wc:#${d.color.toString(16).padStart(6, '0')}` },
+        h('kbd', {}, String(i + 1)), open ? d.label : `Niv. ${d.level}`);
+    }));
+    const next = LEVEL_XP[level];
+    this.levelEl.textContent = next === undefined ? `Niveau ${level} · max` : `Niveau ${level} · ${xp}/${next} XP`;
+  }
+
+  /** Bandeau de la killcam : qui t'a eu, avec quoi, et le temps avant de réapparaître. */
+  killcam(on: boolean, text = '', sub = '') {
+    this.killcamEl.style.display = on ? '' : 'none';
+    this.root.classList.toggle('in-killcam', on);
+    if (on) this.killcamEl.replaceChildren(h('b', {}, 'Killcam'), document.createTextNode(text), h('small', {}, sub));
   }
 
   setDead(by: string | null) {

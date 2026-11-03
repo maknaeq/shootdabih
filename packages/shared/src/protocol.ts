@@ -1,11 +1,11 @@
 import type { Input } from './physics';
-import { CAPTURE_CHOICES, GAME_MODES, HATS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES, type Ability, type GameMode, type Hat, type PickupKind, type RoomSettings } from './config';
+import { CAPTURE_CHOICES, GAME_MODES, HATS, PARKA_COLORS, WEAPONS, type WeaponId, SCORE_CHOICES, TIME_CHOICES, type Ability, type GameMode, type Hat, type PickupKind, type RoomSettings } from './config';
 import { mapSupports } from './maps/modes';
 import { MAP_DEFS } from './maps/index';
 
 export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat; team: number }
 export interface FlagState { team: number; x: number; y: number; z: number; carrier: string | null; atHome: boolean }
-export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number; team: number; captures: number }
+export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number; team: number; captures: number; level: number }
 export interface NetPlayer {
   id: string; x: number; y: number; z: number; yaw: number; pitch: number; alive: boolean;
   vx: number; vy: number; vz: number; dashReadyAt: number; dashUntil: number; padUntil: number; onGround: boolean; time: number;
@@ -14,6 +14,7 @@ export interface NetPlayer {
   overchargeUntil: number; pierceUntil: number; shield: boolean; streak: number;
   /** Capacité ramassée et fin de sa durée (temps serveur, ms). */
   ability: Ability; abilityUntil: number;
+  weapon?: WeaponId; level?: number; xp?: number; lockedUntil?: number;
 }
 export interface PickupState { i: number; kind: PickupKind; active: boolean }
 /** Autre joueur dans un snapshot, en format compact : [id, x, y, z, yaw, pitch, drapeaux, vx, vz]. drapeaux : 1 vivant, 2 protégé, 4 porte le drapeau. */
@@ -41,15 +42,20 @@ export type ClientMsg =
   | { t: 'ping'; c: number }
   | { t: 'customize'; color: number; hat: Hat }
   | { t: 'settings'; settings: RoomSettings }
-  | { t: 'face'; data: string };
+  | { t: 'face'; data: string }
+  | { t: 'weapon'; id: WeaponId }
+  | { t: 'melee'; yaw: number; renderTime: number };
 
 export type ServerMsg =
   | { t: 'welcome'; you: string; room: string; mapId: string; hostId: string; serverTime: number }
   | { t: 'lobby'; players: LobbyPlayer[]; hostId: string; state: RoomState; settings: RoomSettings }
   | { t: 'start'; mapId: string; endsAt: number; settings: RoomSettings }
   | { t: 'snapshot'; time: number; ack: number; me: NetPlayer | null; o: PackedPlayer[] }
-  | { t: 'shot'; by: string; from: [number, number, number]; to: [number, number, number] }
-  | { t: 'kill'; killer: string; victim: string }
+  | { t: 'shot'; by: string; weapon: WeaponId; from: [number, number, number]; to: Array<[number, number, number]> }
+  | { t: 'kill'; killer: string; victim: string; weapon: WeaponId | 'melee' | 'exec'; dist: number; streak: number }
+  | { t: 'exec'; attacker: string; victim: string; x: number; y: number; z: number; yaw: number }
+  | { t: 'melee'; by: string }
+  | { t: 'level'; id: string; level: number; xp: number }
   | { t: 'respawn'; id: string; x: number; y: number; z: number; yaw: number }
   | { t: 'scores'; list: ScoreLine[] }
   | { t: 'matchEnd'; winner: string | null; list: ScoreLine[]; winnerTeam?: number; teamScores?: [number, number] }
@@ -91,6 +97,8 @@ export function decodeClient(raw: string): ClientMsg | null {
     case 'customize':
       return isNum(o.color) && (PARKA_COLORS as readonly number[]).includes(o.color) && (HATS as readonly unknown[]).includes(o.hat)
         ? { t: 'customize', color: o.color, hat: o.hat as Hat } : null;
+    case 'weapon': return (WEAPONS as readonly unknown[]).includes(o.id) ? { t: 'weapon', id: o.id as WeaponId } : null;
+    case 'melee': return isNum(o.yaw) && isNum(o.renderTime) ? { t: 'melee', yaw: o.yaw, renderTime: o.renderTime } : null;
     case 'face': return typeof o.data === 'string' && o.data.length <= 24000 && (o.data === '' || o.data.startsWith('data:image/jpeg;base64,')) ? { t: 'face', data: o.data } : null;
     case 'settings': {
       const s = o.settings as Record<string, unknown> | undefined;
@@ -101,8 +109,8 @@ export function decodeClient(raw: string): ClientMsg | null {
       const ok = (GAME_MODES as readonly unknown[]).includes(mode) && mapOk
         && (SCORE_CHOICES as readonly unknown[]).includes(s.scoreToWin) && (CAPTURE_CHOICES as readonly unknown[]).includes(s.captures)
         && (TIME_CHOICES as readonly unknown[]).includes(s.timeLimitMin)
-        && isBool(s.abilities) && isBool(s.pickups) && !(goal === 0 && s.timeLimitMin === 0);
-      return ok ? { t: 'settings', settings: { mode, mapId: s.mapId as string, scoreToWin: s.scoreToWin as number, captures: s.captures as number, timeLimitMin: s.timeLimitMin as number, abilities: s.abilities as boolean, pickups: s.pickups as boolean } } : null;
+        && isBool(s.abilities) && isBool(s.pickups) && isBool(s.killcam) && !(goal === 0 && s.timeLimitMin === 0);
+      return ok ? { t: 'settings', settings: { mode, mapId: s.mapId as string, scoreToWin: s.scoreToWin as number, captures: s.captures as number, timeLimitMin: s.timeLimitMin as number, abilities: s.abilities as boolean, pickups: s.pickups as boolean, killcam: s.killcam as boolean } } : null;
     }
     default: return null;
   }

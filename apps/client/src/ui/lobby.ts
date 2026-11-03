@@ -180,6 +180,7 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
       h('div', { class: 'hint' }, 'Temps limite'), seg(TIME_CHOICES.map(v => ({ v: v as number, label: v ? `${v} min` : 'Sans limite', disabled: v === 0 && goalOf(s) === 0 })), s.timeLimitMin, v => set({ timeLimitMin: v })),
       h('div', { class: 'hint' }, 'Capacités à ramasser sur la map'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.abilities, v => set({ abilities: v })),
       h('div', { class: 'hint' }, 'Bonus au sol'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.pickups, v => set({ pickups: v })),
+      h('div', { class: 'hint' }, 'Killcam (revoir sa mort avant de réapparaître)'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.killcam, v => set({ killcam: v })),
       s.scoreToWin === 0 ? h('p', { class: 'hint' }, 'Éliminations illimitées : la partie s’arrête à la fin du temps.') : '');
   }
 
@@ -207,7 +208,8 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
           : (settings.captures ? `${settings.captures} drapeau${settings.captures > 1 ? 'x' : ''}` : 'Drapeaux illimités'),
         settings.timeLimitMin ? `${settings.timeLimitMin} min` : 'Sans limite',
         settings.abilities ? 'Capacités sur la map' : 'Sans capacités',
-        settings.pickups ? 'Bonus au sol' : 'Sans bonus'
+        settings.pickups ? 'Bonus au sol' : 'Sans bonus',
+        settings.killcam ? 'Killcam' : 'Sans killcam'
       ].map(t => h('span', {}, t)));
       settingsBtn.style.display = isHost ? '' : 'none';
       if (!isHost) sheet.classList.remove('open');
@@ -239,6 +241,11 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
       endBox.style.display = '';
       endBox.replaceChildren(
         h('h2', {}, title),
+        ...(() => { const m = rows.find(r => r.id === myId); return m ? [h('div', { class: 'end-kd' },
+          h('div', {}, h('b', {}, kd(m.kills, m.deaths)), h('span', {}, 'ton K/D')),
+          h('div', {}, h('b', {}, String(m.kills)), h('span', {}, 'éliminations')),
+          h('div', {}, h('b', {}, String(m.deaths)), h('span', {}, 'morts')),
+          h('div', {}, h('b', {}, String(m.level ?? 1)), h('span', {}, 'niveau atteint')))] : []; })(),
         scoreTable(rows, myId),
         h('p', { class: 'hint' }, isHost ? 'Relance quand tout le monde est prêt.' : "L'hôte peut relancer une partie."));
     },
@@ -254,11 +261,15 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
   };
 }
 
+export const kd = (k: number, d: number) => (d ? k / d : k).toFixed(2).replace('.', ',');
+
 export function scoreTable(rows: ScoreLine[], me: string): HTMLElement {
   return h('table', {},
-    h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Joueur'), h('th', { class: 'num' }, 'Élim.'), h('th', { class: 'num' }, 'Morts'))),
+    h('thead', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Joueur'), h('th', { class: 'num' }, 'Niv.'), h('th', { class: 'num' }, 'Élim.'), h('th', { class: 'num' }, 'Morts'), h('th', { class: 'num' }, 'K/D'))),
     h('tbody', {}, ...rows.map((r, i) => h('tr', { class: r.id === me ? 'me' : '' },
       h('td', {}, String(i + 1)),
       h('td', {}, h('span', { class: 'dot', style: `display:inline-block;vertical-align:-2px;margin-right:8px;background:${hex(r.color)}` }), r.name),
-      h('td', { class: 'num' }, String(r.kills)), h('td', { class: 'num' }, String(r.deaths))))));
+      h('td', { class: 'num' }, String(r.level ?? 1)),
+      h('td', { class: 'num' }, String(r.kills)), h('td', { class: 'num' }, String(r.deaths)),
+      h('td', { class: 'num' }, kd(r.kills, r.deaths))))));
 }

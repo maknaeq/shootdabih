@@ -10,7 +10,7 @@ export class Interpolator {
     for (const p of players) {
       const list = this.buf.get(p.id) ?? this.buf.set(p.id, []).get(p.id)!;
       list.push({ t: serverTime, p });
-      while (list.length > 40) list.shift();
+      while (list.length > 130) list.shift();
     }
   }
 

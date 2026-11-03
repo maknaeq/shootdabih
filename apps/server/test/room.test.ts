@@ -8,6 +8,7 @@ function setup() {
   let t = 1000;
   const clock = { now: () => t };
   const room = new Room('TEST01', 'camp', clock, () => 0.5);
+  room.settings.killcam = false;
   const inbox: Record<string, ServerMsg[]> = { a: [], b: [] };
   const a = room.addPlayer('Alice', m => inbox.a.push(m))!;
   const b = room.addPlayer('Bob', m => inbox.b.push(m))!;
@@ -187,6 +188,41 @@ describe('capture du drapeau', () => {
     const { yaw, pitch } = aimAtB();
     room.handle(a, { t: 'fire', seq: 1, yaw, pitch, renderTime: now() });
     expect(inbox.a.some(m => m.t === 'kill')).toBe(false);
+  });
+});
+
+describe('armes, corps à corps, exécutions', () => {
+  it('les armes se débloquent avec les éliminations', () => {
+    const { room, inbox, a, advance, place, aimAtB, now } = setup();
+    room.handle(a, { t: 'start' });
+    room.handle(a, { t: 'weapon', id: 'grenaille' });
+    expect(room.players.get(a)!.weapon).toBe('rayon');
+    for (let i = 0; i < 3; i++) { advance(1300); place(); const { yaw, pitch } = aimAtB(); room.handle(a, { t: 'fire', seq: i, yaw, pitch, renderTime: now() }); }
+    expect(inbox.a.some(m => m.t === 'level' && m.id === a && m.level === 2)).toBe(true);
+    room.handle(a, { t: 'weapon', id: 'grenaille' });
+    expect(room.players.get(a)!.weapon).toBe('grenaille');
+    const k = inbox.b.find(m => m.t === 'kill');
+    expect(k && k.t === 'kill' && k.weapon === 'rayon' && k.dist).toBe(6);
+  });
+
+  it('corps à corps de face, exécution par derrière', () => {
+    const { room, inbox, a, b, advance, now } = setup();
+    room.handle(a, { t: 'start' });
+    advance(50);
+    const pa = room.players.get(a)!, pb = room.players.get(b)!;
+    // B regarde A (de face) : simple coup
+    pa.state = makePlayerState({ x: 9, y: 0, z: 21 }, -Math.PI / 2); pb.state = makePlayerState({ x: 10.5, y: 0, z: 21 }, Math.PI / 2);
+    pa.history = [{ t: now(), pos: { ...pa.state.pos } }]; pb.history = [{ t: now(), pos: { ...pb.state.pos } }];
+    room.handle(a, { t: 'melee', yaw: -Math.PI / 2, renderTime: now() });
+    const k1 = inbox.a.filter(m => m.t === 'kill').pop();
+    expect(k1 && k1.t === 'kill' && k1.weapon).toBe('melee');
+    // trop tôt pour un deuxième coup, puis exécution dans le dos
+    advance(1300 + 1600);
+    pa.state = makePlayerState({ x: 9, y: 0, z: 21 }, -Math.PI / 2); pb.state = makePlayerState({ x: 10.5, y: 0, z: 21 }, -Math.PI / 2);
+    pa.history = [{ t: now(), pos: { ...pa.state.pos } }]; pb.history = [{ t: now(), pos: { ...pb.state.pos } }];
+    room.handle(a, { t: 'melee', yaw: -Math.PI / 2, renderTime: now() });
+    expect(inbox.b.some(m => m.t === 'exec' && m.attacker === a && m.victim === b)).toBe(true);
+    expect(pa.lockedUntil).toBeGreaterThan(now());
   });
 });
 
