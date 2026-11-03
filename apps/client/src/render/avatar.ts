@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Hat } from '@sdb/shared';
 import { flatMat } from './palette';
+import { MODELS, cloneWithParka } from './models';
 
 const FUR = 0xcfc6b6, FACE = 0x7a5040, PANTS = 0x2f4256, BOOT = 0x262a2b, GUN = 0x4a4f52;
 
@@ -20,13 +21,31 @@ function nameSprite(name: string): THREE.Sprite {
 export class Avatar {
   readonly root = new THREE.Group();
   private body = new THREE.Group();
-  private legL: THREE.Mesh; private legR: THREE.Mesh;
+  private legL: THREE.Object3D; private legR: THREE.Object3D;
+  private armR: THREE.Object3D | null = null;
+  private hats: Partial<Record<Hat, THREE.Object3D>> | null = null;
   private phase = 0;
   private hatGroup = new THREE.Group();
   private bubble: THREE.Mesh;
   private parkaMat: THREE.MeshPhongMaterial;
 
   constructor(color: number, name: string, hat: Hat = 'bonnet') {
+    if (MODELS) {
+      const { root, parka } = cloneWithParka(MODELS.avatar);
+      parka.color.set(color);
+      this.parkaMat = parka;
+      this.body.add(root);
+      this.legL = root.getObjectByName('LegL') ?? new THREE.Object3D();
+      this.legR = root.getObjectByName('LegR') ?? new THREE.Object3D();
+      this.armR = root.getObjectByName('ArmR') ?? null;
+      this.hats = { bonnet: root.getObjectByName('Hat_bonnet'), casquette: root.getObjectByName('Hat_casquette'), chapka: root.getObjectByName('Hat_chapka'), casque: root.getObjectByName('Hat_casque') };
+      this.setHat(hat);
+      this.root.add(this.body);
+      const tag = nameSprite(name); tag.position.y = 2.5; this.root.add(tag);
+      this.bubble = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2, 1), new THREE.MeshBasicMaterial({ color: 0xf3efe6, transparent: true, opacity: 0.22, depthWrite: false, fog: false }));
+      this.bubble.position.y = 1.1; this.bubble.visible = false; this.root.add(this.bubble);
+      return;
+    }
     const parka = new THREE.MeshPhongMaterial({ color, flatShading: true, shininess: 0, specular: 0, fog: false }); this.parkaMat = parka;
     const fur = flatMat(FUR, false), face = flatMat(FACE, false);
     const pants = flatMat(PANTS, false), boot = flatMat(BOOT, false), gun = flatMat(GUN, false);
@@ -60,6 +79,7 @@ export class Avatar {
   setShield(on: boolean) { this.bubble.visible = on; }
 
   setHat(hat: Hat) {
+    if (this.hats) { for (const [k, o] of Object.entries(this.hats)) if (o) o.visible = k === hat; return; }
     this.hatGroup.clear();
     const m = (geo: THREE.BufferGeometry, color: number, x: number, y: number, z: number) => { const o = new THREE.Mesh(geo, flatMat(color, false)); o.position.set(x, y, z); o.castShadow = true; this.hatGroup.add(o); return o; };
     if (hat === 'bonnet') { m(new THREE.CylinderGeometry(0.3, 0.36, 0.26, 8), 0xd9534f, 0, 1.9, -0.02); m(new THREE.IcosahedronGeometry(0.1, 0), 0xf3efe6, 0, 2.08, -0.02); }
@@ -69,8 +89,9 @@ export class Avatar {
   }
 
   /** speed : vitesse horizontale, pour animer la marche. */
-  update(dt: number, speed: number, yaw: number) {
+  update(dt: number, speed: number, yaw: number, pitch = 0) {
     this.root.rotation.y = yaw + Math.PI;
+    if (this.armR) this.armR.rotation.x = -pitch * 0.8;
     this.phase += dt * Math.min(speed, 12) * 1.3;
     const k = Math.min(1, speed / 6);
     this.legL.rotation.x = Math.sin(this.phase) * 0.6 * k;

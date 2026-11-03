@@ -311,7 +311,7 @@ export class Session {
       for (const [id, a] of this.avatars) {
         const p = this.interp.sample(id, rt);
         a.root.visible = !!p && p.alive;
-        if (p) { a.root.position.set(p.x, p.y, p.z); a.update(dt, p.speed, p.yaw); }
+        if (p) { a.root.position.set(p.x, p.y, p.z); a.update(dt, p.speed, p.yaw, p.pitch); }
       }
       this.hud.update(now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.max(0, s.dashReadyAt - s.time), this.endsAt ? (this.endsAt - this.serverNow()) / 1000 : Infinity);
       this.hudBuffs();

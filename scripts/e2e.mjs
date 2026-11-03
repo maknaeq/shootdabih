@@ -23,7 +23,7 @@ try {
   browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
   const open = async name => {
     const ctx = await browser.newContext({ viewport: { width: 800, height: 450 } });
-    await ctx.addInitScript(n => { localStorage.setItem('sdb-name', n); localStorage.setItem('sdb-settings', JSON.stringify({ shadows: false, resolution: 0.5, fov: 85, sensitivity: 1 })); }, name);
+    await ctx.addInitScript(n => { localStorage.setItem('sdb-name', n); localStorage.setItem('sdb-settings', JSON.stringify({ shadows: process.env.SHADOWS === '1', resolution: process.env.SHADOWS === '1' ? 1 : 0.5, fov: 85, sensitivity: 1 })); }, name);
     const page = await ctx.newPage();
     page.on('pageerror', e => console.log(`[${name}] erreur page :`, e.message));
     return page;
@@ -47,6 +47,8 @@ try {
   const state = p => p.evaluate(() => { const s = window.__sdb; return { state: s.state, alive: s.alive, pos: s.predictor?.state.pos }; });
   const sa = await state(a), sb = await state(b);
   check(sa.state === 'playing' && sb.state === 'playing' && sa.alive && sb.alive, 'la partie démarre et les deux joueurs apparaissent');
+  await b.evaluate(() => window.__sdb.hud.showPrompt(false)); await sleep(800);
+  await b.screenshot({ path: `${shots}/e2e-depart.png` });
 
   const t0 = await a.evaluate(() => window.__sdb.predictor.state.time); await sleep(1000); const t1 = await a.evaluate(() => window.__sdb.predictor.state.time);
   console.log(`info : ${(t1 - t0).toFixed(2)} s simulées par seconde réelle chez Alice (navigateur de test sans carte graphique)`);

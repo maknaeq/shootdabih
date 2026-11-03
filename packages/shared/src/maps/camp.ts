@@ -61,11 +61,11 @@ export const camp: MapDef = {
 
     // clairière : tente, voitures, conteneur avec marche, caisses, feu de camp
     b.room(27, 23, 9, 8, 0, 2.4, 'tent', [['w', 2, 4, 2.4]]);
-    b.deco(27, 23, 9, 8, 2.4, 3.4, 'tent');
+    b.prop({ kind: 'roof', x: 31.5, y: 2.4, z: 27, s: 1, r: 0, mat: 'tent', w: 9.4, d: 8.4, h: 1.6 });
     const car = (x: number, z: number, w: number, d: number, m: Mat) => {
-      b.block(x, z, w, d, 0, 1.4, m);
-      const cx = x + w * 0.15, cz = z + d * 0.15;
-      b.block(cx, cz, w * 0.7, d * 0.7, 1.4, 2.1, m);
+      b.hiddenBlock(x, z, w, d, 0, 1.4);
+      b.hiddenBlock(x + w * 0.15, z + d * 0.15, w * 0.7, d * 0.7, 1.4, 2.1);
+      b.prop({ kind: 'car', x: x + w / 2, y: 0, z: z + d / 2, s: 1, r: w > d ? Math.PI / 2 : 0, mat: m, w, d });
     };
     car(10, 24, 2, 4.4, 'orange'); car(21, 12, 4.4, 2, 'cont3'); car(36, 15, 2, 4.4, 'orange');
     cont(17, 18, 2.4, 6, 0, 'cont2'); cont(9, 16, 6, 2.4, 0, 'cont3'); cont(7, 33, 6, 2.4, 0, 'cont2'); cont(36, 34, 6, 2.4, 0, 'cont1');
@@ -73,6 +73,7 @@ export const camp: MapDef = {
     b.block(31, 11, 1.4, 1.4, 0, 1.4, 'plank'); b.block(32.6, 11.2, 1, 1, 0, 1, 'plank');
     b.block(9, 31, 1.4, 1.4, 0, 1.4, 'plank'); b.block(24, 31, 1.6, 1.6, 0, 1.6, 'plank');
     b.block(22.7, 21.2, 1.6, 1.6, 0, 0.4, 'rock');
+    b.prop({ kind: 'fire', x: 23.5, y: 0.4, z: 22, s: 1, r: 0 });
     b.block(20.5, 20, 0.6, 4, 0, 0.6, 'trunk'); b.block(25.3, 20, 0.6, 4, 0, 0.6, 'trunk');
 
     // pont nord-sud au-dessus de la clairière, avec une plateforme au milieu
@@ -113,6 +114,11 @@ export const camp: MapDef = {
       if ((side === 0 || side === 1) && (z < -15 || z > D + 15)) continue;
       b.prop({ kind: 'pine', x, y: 0, z, s: 5 + r() * 6, r: r() * 6 });
     }
+    for (let i = 0; i < 160; i++) {
+      const x = 1 + r() * (W - 2), z = 1 + r() * (D - 2);
+      b.prop({ kind: 'tuft', x, y: 0, z, s: 0.25 + r() * 0.35, r: r() * 6 });
+    }
+    for (let i = 0; i < 14; i++) { const a = (i / 14) * Math.PI * 2 + r() * 0.3, R = 120 + r() * 40; b.prop({ kind: 'mountain', x: W / 2 + Math.cos(a) * R, y: -2, z: D / 2 + Math.sin(a) * R, s: 30 + r() * 30, r: r() * 6 }); }
     for (let i = 0; i < 10; i++) b.prop({ kind: 'rock', x: r() * W, y: 0, z: r() < 0.5 ? -2 - r() * 6 : D + 2 + r() * 6, s: 0.8 + r() * 1.6, r: r() * 6 });
   }
 };

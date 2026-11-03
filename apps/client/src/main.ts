@@ -3,6 +3,9 @@ import { checkRoom } from './net/connection';
 import { Session } from './game/session';
 import { homeScreen, messageScreen, nameScreen } from './ui/home';
 import { h, loadName, wakeText } from './ui/dom';
+import { loadModels } from './render/models';
+
+const models = loadModels();
 
 const app = document.getElementById('app')!;
 let session: Session | null = null;
@@ -30,6 +33,7 @@ async function route() {
     app.replaceChildren(messageScreen('Serveur injoignable', (err as Error).message + ' Réessaie dans un instant.', { label: 'Réessayer', run: () => route() }));
     return;
   }
+  await models;
   app.replaceChildren();
   session = new Session(app, code, name, () => go('/'));
   if (new URLSearchParams(location.search).has('test')) (window as unknown as { __sdb: Session }).__sdb = session;

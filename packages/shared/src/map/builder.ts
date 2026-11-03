@@ -9,6 +9,8 @@ export type Opening = ['n' | 's' | 'w' | 'e', number, number, number?, number?];
 
 export interface Builder {
   block(x: number, z: number, w: number, d: number, y0: number, y1: number, mat: Mat): void;
+  /** Bloc de collision invisible (le décor vient d'un prop). */
+  hiddenBlock(x: number, z: number, w: number, d: number, y0: number, y1: number): void;
   /** Bloc purement décoratif, sans collision. */
   deco(x: number, z: number, w: number, d: number, y0: number, y1: number, mat: Mat): void;
   /** Dalle de 0,4 m dont le dessus est à `y`. */
@@ -32,14 +34,15 @@ const WALL_T = 0.5;
 
 export function buildMap(def: MapDef): MapData {
   const data: MapData = { def, boxes: [], ramps: [], pads: [], spawns: [], lamps: [], props: [], pickups: [] };
-  const push = (x: number, z: number, w: number, d: number, y0: number, y1: number, mat: Mat, solid: boolean) => {
+  const push = (x: number, z: number, w: number, d: number, y0: number, y1: number, mat: Mat, solid: boolean, hidden = false) => {
     if (w <= 0.001 || d <= 0.001 || y1 - y0 <= 0.001) return;
-    const b: Box = { x0: x, x1: x + w, z0: z, z1: z + d, y0, y1, mat, solid };
+    const b: Box = { x0: x, x1: x + w, z0: z, z1: z + d, y0, y1, mat, solid, hidden };
     data.boxes.push(b);
   };
   const b: Builder = {
     block: (x, z, w, d, y0, y1, mat) => push(x, z, w, d, y0, y1, mat, true),
     deco: (x, z, w, d, y0, y1, mat) => push(x, z, w, d, y0, y1, mat, false),
+    hiddenBlock: (x, z, w, d, y0, y1) => push(x, z, w, d, y0, y1, 'dark', true, true),
     slab: (x, z, w, d, y, mat) => push(x, z, w, d, y - 0.4, y, mat, true),
     ramp: (x, z, w, d, h0, h1, axis, mat) => { const r: Ramp = { x0: x, x1: x + w, z0: z, z1: z + d, h0, h1, axis, mat }; data.ramps.push(r); },
     floor(x, z, w, d, y, mat, holes = []) {

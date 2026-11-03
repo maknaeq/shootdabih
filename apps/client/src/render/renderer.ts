@@ -30,6 +30,8 @@ export class Renderer {
     this.settings = { ...settings };
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.15;
     this.camera = new THREE.PerspectiveCamera(settings.fov, 16 / 9, 0.03, 400);
     this.camera.rotation.order = 'YXZ';
     this.scene.add(this.camera);
@@ -51,6 +53,7 @@ export class Renderer {
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(1024, 1024);
     const r = Math.max(W, D) * 0.75, sc = this.sun.shadow.camera;
+    this.sun.shadow.mapSize.set(2048, 2048);
     sc.left = -r; sc.right = r; sc.top = r; sc.bottom = -r; sc.near = 1; sc.far = 120;
     this.sun.shadow.bias = -0.0006; this.sun.shadow.normalBias = 0.02;
     this.scene.add(this.sun, this.sun.target);

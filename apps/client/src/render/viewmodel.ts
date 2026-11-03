@@ -1,15 +1,31 @@
 import * as THREE from 'three';
 import { flatMat } from './palette';
+import { MODELS, cloneWithParka } from './models';
 
 /** Bras et arme à la première personne, attachés à la caméra. */
 export class Viewmodel {
   readonly group = new THREE.Group();
-  readonly tip: THREE.Mesh;
+  readonly tip: THREE.Object3D;
   private base = new THREE.Vector3(0.24, -0.25, -0.5);
   private recoil = 0;
-  private coils: THREE.Mesh[] = [];
+  private coils: THREE.Object3D[] = [];
 
   constructor(camera: THREE.Camera, sleeveColor: number) {
+    if (MODELS) {
+      const { root, parka } = cloneWithParka(MODELS.viewmodel);
+      parka.color.set(sleeveColor);
+      root.rotation.y = Math.PI;
+      root.position.set(0, 0, 0);
+      this.group.add(root);
+      this.tip = root.getObjectByName('VMTip') ?? root;
+      root.traverse(o => { if (o.name.startsWith('VMCoil')) this.coils.push(o); });
+      this.base.set(0.24, -0.23, -0.42);
+      this.group.scale.setScalar(0.4);
+      this.group.position.copy(this.base); this.group.rotation.y = -0.04;
+      this.group.traverse(o => { o.renderOrder = 10; (o as THREE.Mesh).castShadow = false; });
+      camera.add(this.group);
+      return;
+    }
     const m = (geo: THREE.BufferGeometry, color: number, x: number, y: number, z: number) => {
       const o = new THREE.Mesh(geo, flatMat(color, false)); o.position.set(x, y, z); this.group.add(o); return o;
     };

@@ -6,12 +6,13 @@ export type Mat =
   | 'tent' | 'tentDark' | 'cont1' | 'cont2' | 'cont3' | 'cabin' | 'roof' | 'trunk' | 'leaf'
   | 'orange' | 'white' | 'dark' | 'glass' | 'tire' | 'pad';
 
-export interface Box { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number; mat: Mat; solid: boolean }
+/** hidden : collision seule, le client dessine un modèle plus détaillé à la place (voiture…). */
+export interface Box { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number; mat: Mat; solid: boolean; hidden?: boolean }
 export interface Ramp { x0: number; x1: number; z0: number; z1: number; h0: number; h1: number; axis: 'x' | 'z'; mat: Mat }
 export interface Pad { x: number; y: number; z: number; vx: number; vy: number; vz: number }
 export interface Lamp { x: number; y: number; z: number }
 /** Décor sans collision (arbres lointains, cônes de sapin…), dessiné par le client. */
-export interface Prop { kind: 'pine' | 'rock' | 'cone' | 'car'; x: number; y: number; z: number; s: number; r: number; mat?: Mat }
+export interface Prop { kind: 'pine' | 'rock' | 'cone' | 'car' | 'tuft' | 'mountain' | 'fire' | 'roof'; x: number; y: number; z: number; s: number; r: number; mat?: Mat; w?: number; d?: number; h?: number }
 
 export interface Mood {
   sky: [number, number];
