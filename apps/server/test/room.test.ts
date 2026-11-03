@@ -158,6 +158,38 @@ describe('ajouts', () => {
   });
 });
 
+describe('capture du drapeau', () => {
+  it('deux équipes, prise, mort du porteur, retour et capture', () => {
+    const { room, inbox, a, b, advance } = setup();
+    room.handle(a, { t: 'settings', settings: { ...DEFAULT_SETTINGS, mode: 'ctf', mapId: 'camp', captures: 1 } });
+    room.handle(a, { t: 'start' });
+    advance(50);
+    const pa = room.players.get(a)!, pb = room.players.get(b)!;
+    expect(pa.team).not.toBe(pb.team);
+    const bases = (room as unknown as { flags: Array<{ team: number; home: { x: number; y: number; z: number }; carrier: string | null; atHome: boolean }> }).flags;
+    const enemyFlag = bases[1 - pa.team], ownFlag = bases[pa.team];
+    // A prend le drapeau adverse
+    pa.state = makePlayerState({ ...enemyFlag.home }); advance(50);
+    expect(enemyFlag.carrier).toBe(a);
+    // A le ramène chez lui : capture, victoire à 1
+    pa.state = makePlayerState({ ...ownFlag.home }); advance(50);
+    expect(inbox.b.some(m => m.t === 'flagEvent' && m.kind === 'capture' && m.by === a)).toBe(true);
+    const end = inbox.a.find(m => m.t === 'matchEnd');
+    expect(end && end.t === 'matchEnd' && end.winnerTeam).toBe(pa.team);
+  });
+
+  it('pas de tir ami', () => {
+    const { room, inbox, a, b, advance, place, aimAtB, now } = setup();
+    room.handle(a, { t: 'settings', settings: { ...DEFAULT_SETTINGS, mode: 'ctf', mapId: 'camp' } });
+    room.handle(a, { t: 'start' });
+    room.players.get(b)!.team = room.players.get(a)!.team;
+    advance(50); place();
+    const { yaw, pitch } = aimAtB();
+    room.handle(a, { t: 'fire', seq: 1, yaw, pitch, renderTime: now() });
+    expect(inbox.a.some(m => m.t === 'kill')).toBe(false);
+  });
+});
+
 describe('serveur', () => {
   it('création de salon et connexion de deux joueurs', async () => {
     const srv = await startServer(0);

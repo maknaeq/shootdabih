@@ -1,0 +1,9 @@
+[Unit]
+Description=shootdabih : vérifie les mises à jour toutes les minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

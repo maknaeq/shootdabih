@@ -154,7 +154,7 @@ describe('protocole', () => {
   });
 });
 
-for (const id of ['camp', 'relais']) describe('map ' + id, () => {
+for (const id of ['camp', 'polaire']) describe('map ' + id, () => {
   const camp = getMap(id);
   it('chaque spawn est sur un sol et pas dans un mur', () => {
     camp.spawns.forEach(s => {

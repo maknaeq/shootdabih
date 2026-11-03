@@ -1,0 +1,6 @@
+[Unit]
+Description=shootdabih : récupère et publie la branche production si elle a changé
+
+[Service]
+Type=oneshot
+ExecStart=/opt/shootdabih/deploy/autodeploy.sh

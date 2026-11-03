@@ -3,8 +3,9 @@ import { CAPTURE_CHOICES, GAME_MODES, HATS, LAP_CHOICES, PARKA_COLORS, SCORE_CHO
 import { mapSupports } from './maps/modes';
 import { MAP_DEFS } from './maps/index';
 
-export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat }
-export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number }
+export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat; team: number }
+export interface FlagState { team: number; x: number; y: number; z: number; carrier: string | null; atHome: boolean }
+export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number; team: number; captures: number }
 export interface NetPlayer {
   id: string; x: number; y: number; z: number; yaw: number; pitch: number; alive: boolean;
   vx: number; vy: number; vz: number; dashReadyAt: number; dashUntil: number; padUntil: number; onGround: boolean; time: number;
@@ -49,7 +50,9 @@ export type ServerMsg =
   | { t: 'kill'; killer: string; victim: string }
   | { t: 'respawn'; id: string; x: number; y: number; z: number; yaw: number }
   | { t: 'scores'; list: ScoreLine[] }
-  | { t: 'matchEnd'; winner: string | null; list: ScoreLine[] }
+  | { t: 'matchEnd'; winner: string | null; list: ScoreLine[]; winnerTeam?: number; teamScores?: [number, number] }
+  | { t: 'flags'; flags: FlagState[]; score: [number, number] }
+  | { t: 'flagEvent'; kind: 'take' | 'drop' | 'return' | 'capture'; team: number; by: string | null }
   | { t: 'pong'; c: number; serverTime: number }
   | { t: 'streak'; id: string; n: number }
   | { t: 'shutdown'; killer: string; victim: string; n: number }

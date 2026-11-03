@@ -64,6 +64,9 @@ export const DEFAULT_SETTINGS: RoomSettings = { mode: 'dm', mapId: 'auto', score
 export const SCORE_CHOICES = [10, 25, 50, 0] as const;
 export const CAPTURE_CHOICES = [1, 3, 5, 0] as const;
 export const LAP_CHOICES = [1, 3, 5] as const;
+export const TEAM_COLORS = [0xd9534f, 0x5b8cff] as const;
+export const TEAM_NAMES = ['Rouges', 'Bleus'] as const;
+export const FLAG_RETURN_SECONDS = 15;
 export const TIME_CHOICES = [5, 10, 15, 20, 0] as const;
 /** Bonus au sol : effets temporaires. */
 export const BONUS_KINDS = ['overcharge', 'pierce', 'shield'] as const;

@@ -1,0 +1,45 @@
+# Tests à chaque push ; si tout passe sur main, le commit est publié sur la branche production,
+# que le VPS récupère tout seul (voir deploy/autodeploy.sh).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typage
+        run: pnpm -r typecheck
+      - name: Tests (physique, collisions, règles de spawn, densité des maps, serveur)
+        run: pnpm test
+      - name: Compilation du site
+        run: pnpm --filter @sdb/client build
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Publier sur la branche production
+        run: git push --force origin HEAD:refs/heads/production

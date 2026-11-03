@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Installation de shootdabih sur un VPS Ubuntu 22.04+ ou Debian 12+ (à lancer en root, ou avec sudo).
 # Usage : sudo DOMAIN=jeu.exemple.fr REPO=git@github.com:maknaeq/shootdabih.git bash deploy/setup.sh
+# La clé de déploiement du VPS (lecture seule) doit être dans /home/shootdabih/.ssh pour le clone et les mises à jour.
 # Sans DOMAIN, le script utilise <ip>.sslip.io, une adresse gratuite qui marche avec HTTPS.
 set -euo pipefail
 
 REPO="${REPO:-git@github.com:maknaeq/shootdabih.git}"
-BRANCH="${BRANCH:-main}"
+BRANCH="${BRANCH:-production}"
 APP_DIR=/opt/shootdabih
 APP_USER=shootdabih
 PORT=8787
@@ -37,16 +38,22 @@ fi
 # utilisateur dédié et code
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$APP_USER"
 if [ ! -d "$APP_DIR/.git" ]; then
-  git clone --branch "$BRANCH" "$REPO" "$APP_DIR"
+  mkdir -p "$APP_DIR" && chown "$APP_USER:$APP_USER" "$APP_DIR"
+  sudo -u "$APP_USER" git clone --branch "$BRANCH" "$REPO" "$APP_DIR"
 fi
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-sudo -u "$APP_USER" bash -c "cd $APP_DIR && git fetch && git checkout $BRANCH && git pull --ff-only && pnpm install --frozen-lockfile && pnpm --filter @sdb/client build"
+sudo -u "$APP_USER" bash -c "cd $APP_DIR && git fetch && git checkout -B $BRANCH origin/$BRANCH && pnpm install --frozen-lockfile && pnpm --filter @sdb/client build"
 
 # service systemd
 sed "s#__DIR__#$APP_DIR#g; s#__USER__#$APP_USER#g; s#__PORT__#$PORT#g" "$APP_DIR/deploy/shootdabih.service" > /etc/systemd/system/shootdabih.service
 systemctl daemon-reload
 systemctl enable --now shootdabih
 systemctl restart shootdabih
+
+# mise à jour automatique : la CI publie les commits testés sur la branche production
+cp "$APP_DIR/deploy/shootdabih-autodeploy.service" "$APP_DIR/deploy/shootdabih-autodeploy.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now shootdabih-autodeploy.timer
 
 # Caddy en reverse proxy (WebSocket compris)
 sed "s#__DOMAIN__#$DOMAIN#g; s#__PORT__#$PORT#g" "$APP_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile

@@ -11,6 +11,7 @@ export const camp: MapDef = {
   size: [48, 44],
   players: [2, 8],
   lobby: { x: 13.1, z: 21, angle: 0.35 },
+  ctf: { bases: [{ x: 8, z: 39 }, { x: 40, z: 5 }] },
   mood: {
     sky: [0x14282a, 0x3a554b],
     fog: 0x24403b, fogNear: 30, fogFar: 95,

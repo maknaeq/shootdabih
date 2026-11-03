@@ -1,5 +1,6 @@
 import {
-  ABILITIES, BONUS_KINDS, CONFIG, DEFAULT_SETTINGS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
+  ABILITIES, BONUS_KINDS, CONFIG, DEFAULT_SETTINGS, FLAG_RETURN_SECONDS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
+  dist, mapSupports, surfaceAt, type FlagState,
   chooseSpawn, cleanName, packPlayer, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
   type Ability, type ClientMsg, type Hat, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PickupKind, type PickupState,
   type PlayerState, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg, type Vec3
@@ -17,6 +18,8 @@ interface Player {
   ability: Ability;
   abilityUntil: number;
   face: string;
+  team: number;
+  captures: number;
   send(m: ServerMsg): void;
   state: PlayerState;
   alive: boolean;
@@ -37,6 +40,7 @@ interface Player {
 }
 
 interface PickupSpot { pos: Vec3; kind: PickupKind; active: boolean; respawnAt: number }
+interface Flag { team: number; home: Vec3; pos: Vec3; carrier: string | null; atHome: boolean; dropAt: number }
 
 const HISTORY_MS = 1000;
 /** Arrondit les nombres d'un état au millième : la précision suffit et le message est bien plus court. */
@@ -56,6 +60,12 @@ export class Room {
   private lastSnapshot = 0;
   private lastUsed: number[] = [];
   private pickups: PickupSpot[] = [];
+  private flags: Flag[] = [];
+  private teamScore: [number, number] = [0, 0];
+
+  private get ctf() { return this.state === 'playing' && this.settings.mode === 'ctf'; }
+  /** Vrai si a et b peuvent se tirer dessus : toujours en chacun pour soi, seulement entre équipes au drapeau. */
+  private enemies(a: Player, b: Player) { return a !== b && (this.settings.mode !== 'ctf' || a.team !== b.team); }
   private nextId = 1;
   private lastMapId = '';
 
@@ -73,7 +83,7 @@ export class Room {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = PARKA_COLORS.find(c => !used.has(c)) ?? PARKA_COLORS[0];
     const p: Player = {
-      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
+      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', team: 0, captures: 0, send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
       kills: 0, deaths: 0, streak: 0, bestStreak: 0, lastFireAt: -1e9, queue: [], ack: -1, history: [],
       overchargeUntil: 0, pierceUntil: 0, shieldBuffUntil: 0, shieldAbilityUntil: 0, lastAbilityUse: -1
     };
@@ -85,6 +95,7 @@ export class Room {
     if (this.state === 'playing') {
       send({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
       send({ t: 'pickups', list: this.pickupList() });
+      if (this.settings.mode === 'ctf') { const n0 = [...this.players.values()].filter(q => q !== p && q.team === 0).length; p.team = n0 <= this.players.size - 1 - n0 ? 0 : 1; this.broadcastLobby(); send({ t: 'flags', flags: this.flagList(), score: this.teamScore }); }
       p.respawnAt = this.clock.now();
       send({ t: 'scores', list: this.scores() });
     }
@@ -92,6 +103,8 @@ export class Room {
   }
 
   removePlayer(id: string) {
+    const leaving = this.players.get(id);
+    if (leaving) this.dropFlagOf(leaving);
     if (!this.players.delete(id)) return;
     if (this.hostId === id) this.hostId = this.players.keys().next().value ?? null;
     if (this.players.size === 0) { this.emptySince = this.clock.now(); this.state = 'lobby'; return; }
@@ -133,10 +146,11 @@ export class Room {
   }
 
   private chooseMap(): string {
-    if (this.settings.mapId !== 'auto' && MAP_DEFS[this.settings.mapId]) return this.settings.mapId;
+    if (this.settings.mapId !== 'auto' && MAP_DEFS[this.settings.mapId] && mapSupports(MAP_DEFS[this.settings.mapId], this.settings.mode)) return this.settings.mapId;
     const n = this.players.size;
-    const fits = Object.values(MAP_DEFS).filter(d => n >= d.players[0] && n <= d.players[1]).map(d => d.id);
-    const pool = fits.length ? fits : Object.keys(MAP_DEFS);
+    const ok = Object.values(MAP_DEFS).filter(d => mapSupports(d, this.settings.mode));
+    const fits = ok.filter(d => n >= d.players[0] && n <= d.players[1]).map(d => d.id);
+    const pool = fits.length ? fits : ok.map(d => d.id);
     const fresh = pool.filter(id => id !== this.lastMapId);
     const list = fresh.length ? fresh : pool;
     return list[Math.floor(this.rand() * list.length)];
@@ -156,13 +170,25 @@ export class Room {
     this.lastUsed = [];
     const kinds = this.allowedKinds();
     this.pickups = kinds.length ? this.map.pickups.map((pos, i) => ({ pos, kind: kinds[i % kinds.length], active: true, respawnAt: 0 })) : [];
+    this.teamScore = [0, 0];
+    this.flags = [];
+    if (this.settings.mode === 'ctf' && this.map.def.ctf) {
+      [...this.players.values()].sort(() => this.rand() - 0.5).forEach((q, i) => { q.team = i % 2; });
+      this.flags = this.map.def.ctf.bases.map((b, team) => {
+        const top = surfaceAt(this.map, b.x, b.z, 1e6);
+        const home = { x: b.x, y: Number.isFinite(top) ? top : 0, z: b.z };
+        return { team, home, pos: { ...home }, carrier: null, atHome: true, dropAt: 0 };
+      });
+    }
     for (const q of this.players.values()) {
+      q.captures = 0;
       q.kills = 0; q.deaths = 0; q.streak = 0; q.bestStreak = 0; q.alive = false; q.respawnAt = now; q.lastFireAt = -1e9; q.queue = []; q.history = [];
       q.overchargeUntil = 0; q.pierceUntil = 0; q.shieldBuffUntil = 0; q.shieldAbilityUntil = 0; q.ability = 'aucune'; q.abilityUntil = 0;
     }
     this.broadcastLobby();
     this.broadcast({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
     this.broadcast({ t: 'pickups', list: this.pickupList() });
+    if (this.flags.length) this.broadcastFlags();
     for (const q of this.players.values()) this.respawn(q, now);
     this.broadcast({ t: 'scores', list: this.scores() });
   }
@@ -210,6 +236,7 @@ export class Room {
           this.broadcast({ t: 'pickups', list: this.pickupList() });
         }
       });
+      if (this.ctf) this.ctfTick(now);
       if (this.endsAt && now >= this.endsAt) this.endMatch();
       if (now - this.lastSnapshot >= 1000 / CONFIG.snapshotRate - 1) { this.lastSnapshot = now; this.sendSnapshots(now); }
     } else if (this.state === 'ended' && now - this.endedAt >= END_SCREEN_MS) {
@@ -237,11 +264,66 @@ export class Room {
     });
   }
 
+  private flagList(): FlagState[] { return this.flags.map(f => ({ team: f.team, x: f.pos.x, y: f.pos.y, z: f.pos.z, carrier: f.carrier, atHome: f.atHome })); }
+  private broadcastFlags() { this.broadcast({ t: 'flags', flags: this.flagList(), score: this.teamScore }); }
+
+  private dropFlagOf(p: Player) {
+    for (const f of this.flags) if (f.carrier === p.id) {
+      f.carrier = null; f.atHome = false; f.dropAt = this.clock.now();
+      const top = surfaceAt(this.map, p.state.pos.x, p.state.pos.z, p.state.pos.y + 0.6);
+      f.pos = { x: p.state.pos.x, y: Number.isFinite(top) ? top : p.state.pos.y, z: p.state.pos.z };
+      if (f.pos.y < CONFIG.killPlaneY + 5) { f.pos = { ...f.home }; f.atHome = true; }
+      this.broadcast({ t: 'flagEvent', kind: 'drop', team: f.team, by: p.id });
+      this.broadcastFlags();
+    }
+  }
+
+  /** Capture du drapeau : prise, retour, capture, et retour automatique d'un drapeau tombé. */
+  private ctfTick(now: number) {
+    let changed = false;
+    for (const f of this.flags) {
+      if (f.carrier) {
+        const c = this.players.get(f.carrier);
+        if (!c || !c.alive) { if (c) this.dropFlagOf(c); else { f.carrier = null; f.pos = { ...f.home }; f.atHome = true; changed = true; } continue; }
+        f.pos = { ...c.state.pos };
+        const own = this.flags[c.team];
+        if (own && own.atHome && dist(c.state.pos, own.home) < 1.6) {
+          this.teamScore[c.team]++; c.captures++;
+          f.carrier = null; f.pos = { ...f.home }; f.atHome = true; changed = true;
+          this.broadcast({ t: 'flagEvent', kind: 'capture', team: c.team, by: c.id });
+          this.broadcast({ t: 'scores', list: this.scores() });
+          if (this.settings.captures > 0 && this.teamScore[c.team] >= this.settings.captures) { this.broadcastFlags(); this.endMatch(); return; }
+        }
+        continue;
+      }
+      if (!f.atHome && now - f.dropAt > FLAG_RETURN_SECONDS * 1000) {
+        f.pos = { ...f.home }; f.atHome = true; changed = true;
+        this.broadcast({ t: 'flagEvent', kind: 'return', team: f.team, by: null });
+      }
+      for (const p of this.players.values()) {
+        if (!p.alive) continue;
+        const dx = p.state.pos.x - f.pos.x, dz = p.state.pos.z - f.pos.z;
+        if (Math.hypot(dx, dz) > 1.4 || Math.abs(p.state.pos.y - f.pos.y) > 1.8) continue;
+        if (p.team !== f.team) {
+          f.carrier = p.id; f.atHome = false; changed = true;
+          this.broadcast({ t: 'flagEvent', kind: 'take', team: f.team, by: p.id });
+        } else if (!f.atHome) {
+          f.pos = { ...f.home }; f.atHome = true; changed = true;
+          this.broadcast({ t: 'flagEvent', kind: 'return', team: f.team, by: p.id });
+        }
+        break;
+      }
+    }
+    if (changed) this.broadcastFlags();
+  }
+
   private pickupList(): PickupState[] { return this.pickups.map((s, i) => ({ i, kind: s.kind, active: s.active })); }
 
   private respawn(p: Player, now: number) {
-    const enemies = [...this.players.values()].filter(q => q !== p && q.alive).map(q => q.state.pos);
-    const k = chooseSpawn(this.map, enemies, this.lastUsed, now / 1000, this.rand);
+    const enemies = [...this.players.values()].filter(q => this.enemies(p, q) && q.alive).map(q => q.state.pos);
+    const bases = this.ctf && this.map.def.ctf ? this.map.def.ctf.bases : null;
+    const allowed = bases ? (i: number) => { const s = this.map.spawns[i], own = bases[p.team], other = bases[1 - p.team]; return Math.hypot(s.x - own.x, s.z - own.z) < Math.hypot(s.x - other.x, s.z - other.z); } : undefined;
+    const k = chooseSpawn(this.map, enemies, this.lastUsed, now / 1000, this.rand, allowed);
     this.lastUsed[k] = now / 1000;
     const s = this.map.spawns[k];
     const yaw = openYaw(this.map, s);
@@ -280,7 +362,7 @@ export class Room {
     if (now - p.lastFireAt < this.fireCooldownMs(p, now) - 60) return;
     p.lastFireAt = now;
     const rewindTo = Math.max(now - CONFIG.maxRewindMs - CONFIG.interpDelayMs, Math.min(now, renderTime));
-    const targets = [...this.players.values()].filter(q => q !== p && q.alive).map(q => ({ id: q.id, pos: this.posAt(q, rewindTo) }));
+    const targets = [...this.players.values()].filter(q => this.enemies(p, q) && q.alive).map(q => ({ id: q.id, pos: this.posAt(q, rewindTo) }));
     const origin = eyeOf(p.state);
     const r = traceShotAll(this.map, origin, forwardFromAngles(yaw, pitch), targets);
     const pierce = now < p.pierceUntil;
@@ -298,12 +380,13 @@ export class Room {
     }
     if (killed) {
       this.broadcast({ t: 'scores', list: this.scores() });
-      if (this.settings.scoreToWin > 0 && p.kills >= this.settings.scoreToWin) this.endMatch();
+      if (this.settings.mode === 'dm' && this.settings.scoreToWin > 0 && p.kills >= this.settings.scoreToWin) this.endMatch();
     }
   }
 
   private kill(p: Player, v: Player, now: number) {
     const victimStreak = v.streak;
+    this.dropFlagOf(v);
     v.alive = false; v.respawnAt = now + CONFIG.respawnDelay * 1000; v.deaths++; v.streak = 0;
     p.kills++; p.streak++; p.bestStreak = Math.max(p.bestStreak, p.streak);
     this.broadcast({ t: 'kill', killer: p.id, victim: v.id });
@@ -316,15 +399,21 @@ export class Room {
     this.state = 'ended';
     this.endedAt = this.clock.now();
     const list = this.scores();
-    const winner = list.length && list[0].kills > 0 ? list[0].id : null;
-    this.broadcast({ t: 'matchEnd', winner, list });
+    if (this.settings.mode === 'ctf') {
+      const [a, b2] = this.teamScore, winnerTeam = a === b2 ? -1 : a > b2 ? 0 : 1;
+      this.broadcast({ t: 'matchEnd', winner: null, list, winnerTeam, teamScores: [...this.teamScore] as [number, number] });
+    } else {
+      const winner = list.length && list[0].kills > 0 ? list[0].id : null;
+      this.broadcast({ t: 'matchEnd', winner, list });
+    }
+    for (const f of this.flags) { f.carrier = null; f.pos = { ...f.home }; f.atHome = true; }
     this.broadcastLobby();
   }
 
   scores(): ScoreLine[] {
     return [...this.players.values()]
-      .map(p => ({ id: p.id, name: p.name, color: p.color, kills: p.kills, deaths: p.deaths }))
-      .sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+      .map(p => ({ id: p.id, name: p.name, color: p.color, kills: p.kills, deaths: p.deaths, team: p.team, captures: p.captures }))
+      .sort((a, b) => b.captures - a.captures || b.kills - a.kills || a.deaths - b.deaths);
   }
 
   /** Données utiles au calcul des points (étape 3). */
@@ -341,7 +430,8 @@ export class Room {
       shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak,
       ability: p.state.ability, abilityUntil: p.abilityUntil
     }));
-    const packed = players.map(n => packPlayer(n));
+    const carriers = new Set(this.flags.map(f => f.carrier).filter(Boolean));
+    const packed = players.map(n => packPlayer(n, carriers.has(n.id)));
     let i = 0;
     for (const p of this.players.values()) {
       const me = roundAll(players[i++]);
@@ -349,7 +439,7 @@ export class Room {
     }
   }
 
-  private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, hat: p.hat })); }
+  private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, hat: p.hat, team: this.settings.mode === 'ctf' && this.state !== 'lobby' ? p.team : -1 })); }
   private broadcastLobby() { this.broadcast({ t: 'lobby', players: this.lobbyPlayers(), hostId: this.hostId ?? '', state: this.state, settings: this.settings }); }
   private broadcast(m: ServerMsg) { for (const p of this.players.values()) p.send(m); }
 }
