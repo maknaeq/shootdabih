@@ -1,10 +1,9 @@
 import type { Input } from './physics';
-import { CAPTURE_CHOICES, GAME_MODES, HATS, LAP_CHOICES, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES, type Ability, type GameMode, type Hat, type PickupKind, type RoomSettings } from './config';
+import { CAPTURE_CHOICES, GAME_MODES, HATS, PARKA_COLORS, SCORE_CHOICES, TIME_CHOICES, type Ability, type GameMode, type Hat, type PickupKind, type RoomSettings } from './config';
 import { mapSupports } from './maps/modes';
 import { MAP_DEFS } from './maps/index';
 
 export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat; team: number }
-export interface RaceLine { id: string; lap: number; done: boolean; time: number | null; rank: number; nextCp: number }
 export interface FlagState { team: number; x: number; y: number; z: number; carrier: string | null; atHome: boolean }
 export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number; team: number; captures: number }
 export interface NetPlayer {
@@ -15,7 +14,6 @@ export interface NetPlayer {
   overchargeUntil: number; pierceUntil: number; shield: boolean; streak: number;
   /** Capacité ramassée et fin de sa durée (temps serveur, ms). */
   ability: Ability; abilityUntil: number;
-  vehicle?: 'foot' | 'bike'; speed?: number;
 }
 export interface PickupState { i: number; kind: PickupKind; active: boolean }
 /** Autre joueur dans un snapshot, en format compact : [id, x, y, z, yaw, pitch, drapeaux, vx, vz]. drapeaux : 1 vivant, 2 protégé, 4 porte le drapeau. */
@@ -54,7 +52,6 @@ export type ServerMsg =
   | { t: 'scores'; list: ScoreLine[] }
   | { t: 'matchEnd'; winner: string | null; list: ScoreLine[]; winnerTeam?: number; teamScores?: [number, number] }
   | { t: 'flags'; flags: FlagState[]; score: [number, number] }
-  | { t: 'race'; startAt: number; laps: number; list: RaceLine[] }
   | { t: 'flagEvent'; kind: 'take' | 'drop' | 'return' | 'capture'; team: number; by: string | null }
   | { t: 'pong'; c: number; serverTime: number }
   | { t: 'streak'; id: string; n: number }
@@ -98,12 +95,12 @@ export function decodeClient(raw: string): ClientMsg | null {
       if (!s) return null;
       const mode = s.mode as GameMode;
       const mapOk = typeof s.mapId === 'string' && (s.mapId === 'auto' || (s.mapId in MAP_DEFS && mapSupports(MAP_DEFS[s.mapId], mode)));
-      const goal = mode === 'dm' ? s.scoreToWin : mode === 'ctf' ? s.captures : 1;
+      const goal = mode === 'dm' ? s.scoreToWin : s.captures;
       const ok = (GAME_MODES as readonly unknown[]).includes(mode) && mapOk
-        && (SCORE_CHOICES as readonly unknown[]).includes(s.scoreToWin) && (CAPTURE_CHOICES as readonly unknown[]).includes(s.captures) && (LAP_CHOICES as readonly unknown[]).includes(s.laps)
+        && (SCORE_CHOICES as readonly unknown[]).includes(s.scoreToWin) && (CAPTURE_CHOICES as readonly unknown[]).includes(s.captures)
         && (TIME_CHOICES as readonly unknown[]).includes(s.timeLimitMin)
-        && isBool(s.abilities) && isBool(s.pickups) && isBool(s.raceWeapons) && !(goal === 0 && s.timeLimitMin === 0);
-      return ok ? { t: 'settings', settings: { mode, mapId: s.mapId as string, scoreToWin: s.scoreToWin as number, captures: s.captures as number, laps: s.laps as number, timeLimitMin: s.timeLimitMin as number, abilities: s.abilities as boolean, pickups: s.pickups as boolean, raceWeapons: s.raceWeapons as boolean } } : null;
+        && isBool(s.abilities) && isBool(s.pickups) && !(goal === 0 && s.timeLimitMin === 0);
+      return ok ? { t: 'settings', settings: { mode, mapId: s.mapId as string, scoreToWin: s.scoreToWin as number, captures: s.captures as number, timeLimitMin: s.timeLimitMin as number, abilities: s.abilities as boolean, pickups: s.pickups as boolean } } : null;
     }
     default: return null;
   }

@@ -1,6 +1,6 @@
 ---
 name: shootdabih-maps
-description: Use when creating, reworking or reviewing a map of shootdabih (packages/shared/src/maps/*.ts) — deathmatch arenas, capture the flag maps or race tracks. Covers the builder API, coordinates, density rules from the Quakecraft analysis, distinctiveness, mode requirements and the validation commands to run before shipping.
+description: Use when creating, reworking or reviewing a map of shootdabih (packages/shared/src/maps/*.ts) — deathmatch arenas and capture the flag maps. Covers the builder API, coordinates, density rules from the Quakecraft analysis, distinctiveness, mode requirements and the validation commands to run before shipping.
 ---
 
 # Faire une map shootdabih
@@ -34,7 +34,7 @@ Une map est un fichier TypeScript dans `packages/shared/src/maps/`, enregistré 
 
 Matériaux (`Mat`) : `ground dirt snow rock wood plank metal grate concrete tent tentDark cont1 cont2 cont3 cabin roof trunk leaf orange white dark glass tire pad water`. Les couleurs sont dans `apps/client/src/render/palette.ts`.
 
-`MapDef` : `id`, `name`, `size [w, d]`, `players [min, max]`, `mood` (ciel, brouillard, lumières), `lobby { x, z, angle }` (où les joueurs posent dans la salle d'attente : un coin dégagé, la caméra regarde depuis `angle`), optionnel `ctf` et `race` (voir plus bas), `build(b)`.
+`MapDef` : `id`, `name`, `size [w, d]`, `players [min, max]`, `mood` (ciel, brouillard, lumières), `lobby { x, z, angle }` (où les joueurs posent dans la salle d'attente : un coin dégagé, la caméra regarde depuis `angle`), optionnel `ctf` (voir plus bas), `build(b)`.
 
 ## Règles de densité (tirées des maps Quakecraft Temple, Ruin, Struttura)
 
@@ -58,10 +58,9 @@ Avant d'écrire, choisir **un archétype qui n'existe pas encore** dans le pool,
 | Archétype | Exemple existant |
 |---|---|
 | Anneau ouvert autour d'une clairière | Camp de base |
-| Intérieur : modules et couloirs, peu de ciel | Station polaire |
+| Intérieur : modules et couloirs, peu de ciel, symétrique | Station polaire |
 | Verticalité : une grande structure centrale à 4 niveaux | à faire |
 | Terrasses en pente sur un relief | à faire (Chantier de montagne) |
-| Circuit (course) | Circuit des crêtes |
 
 Varier aussi : ambiance (`mood`), matériaux dominants, forme du centre, place des tremplins. Deux maps qui partagent l'archétype et la palette se ressemblent, même avec des tailles différentes.
 
@@ -69,7 +68,6 @@ Varier aussi : ambiance (`mood`), matériaux dominants, forme du centre, place d
 
 - **Deathmatch** : spawns et pickups ci-dessus.
 - **Capture the flag** : `ctf: { bases: [{ x, z }, { x, z }] }` aux deux extrémités, à la même hauteur ou presque. La map doit être **à peu près symétrique** (miroir ou rotation de 180°) pour que les équipes soient à égalité. Au moins 3 chemins entre les bases, dont un en hauteur. Au moins 4 spawns près de chaque base.
-- **Course** : `race: { checkpoints: [{ x0, x1, z0, z1 }, ...], start: { x, z, yaw }, laps }`. Le premier checkpoint est la ligne d'arrivée. Piste d'au moins 8 m de large, barrières des deux côtés, virages en plaques carrées de 10 à 14 m, rampes de 1:3 au plus pour les motos.
 
 ## Valider avant de livrer
 

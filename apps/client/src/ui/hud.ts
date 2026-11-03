@@ -21,11 +21,7 @@ export class Hud {
   private lastBuffs = '';
   private lastAbility = '';
   private teamBar = h('div', { class: 'teambar', style: 'display:none' });
-  private raceBox = h('div', { class: 'racebox', style: 'display:none' });
-  private countdownEl = h('div', { class: 'countdown' });
-  private arrowEl = h('div', { class: 'cparrow', style: 'display:none' }, h('i', {}));
-  private speedEl = h('div', { class: 'speedo', style: 'display:none' });
-  private lastRace = '';
+
   private carryEl = h('div', { class: 'carry', style: 'display:none' }, 'Tu portes le drapeau : ramène-le à ta base');
   private hitAt = -9;
   private lastDash = '';
@@ -35,7 +31,7 @@ export class Hud {
 
   constructor(settings: HTMLElement) {
     this.root = h('div', { class: 'hud' },
-      this.shieldEl, this.teamBar, this.carryEl, this.raceBox, this.countdownEl, this.arrowEl, this.speedEl, this.feed, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
+      this.shieldEl, this.teamBar, this.carryEl, this.feed, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
       h('div', { class: 'cross' }), this.hit, this.pop,
       h('div', { class: 'bottom' }, this.cd, h('div', { class: 'lbl' }, h('span', {}, 'Rayon'), this.dash)),
       this.dead);
@@ -57,26 +53,6 @@ export class Hud {
     this.teamBar.replaceChildren(side(0), h('div', { class: 'goal' }, goal ? `premier à ${goal}` : 'au temps'), side(1));
   }
   carrying(v: boolean) { this.carryEl.style.display = v ? '' : 'none'; }
-
-  /** Course : place, tour, vitesse, compte à rebours et flèche vers le prochain checkpoint. */
-  race(r: { rank: number; total: number; lap: number; laps: number; speed: number; countdown: number; arrow: number; done: boolean; time: number | null } | null) {
-    const on = !!r;
-    this.root.classList.toggle('racing', on);
-    this.raceBox.style.display = on ? '' : 'none'; this.arrowEl.style.display = on && !r!.done ? '' : 'none'; this.speedEl.style.display = on ? '' : 'none';
-    if (!r) { this.countdownEl.textContent = ''; return; }
-    const key = `${r.rank}/${r.total}/${r.lap}/${r.laps}/${r.done}/${r.time}`;
-    if (key !== this.lastRace) {
-      this.lastRace = key;
-      const fmt = (ms: number) => { const s = ms / 1000; return `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart(5, '0')}`.replace('.', ','); };
-      this.raceBox.replaceChildren(
-        h('div', { class: 'rank' }, h('b', {}, r.rank ? String(r.rank) : '-'), h('span', {}, r.rank === 1 ? 'er' : 'e'), h('small', {}, ` sur ${r.total}`)),
-        h('div', { class: 'lap' }, r.done ? `Arrivé en ${r.time !== null ? fmt(r.time) : '?'}` : `Tour ${r.lap} / ${r.laps}`));
-    }
-    this.speedEl.textContent = `${Math.round(r.speed)} km/h`;
-    this.arrowEl.style.transform = `translateX(-50%) rotate(${(-r.arrow).toFixed(3)}rad)`;
-    const c = r.countdown;
-    this.countdownEl.textContent = c > 0 ? String(Math.ceil(c)) : c > -1 ? 'Partez !' : '';
-  }
 
   announce(text: string, sub: string, now: number) {
     this.announceEl.replaceChildren(document.createTextNode(text), h('small', {}, sub));

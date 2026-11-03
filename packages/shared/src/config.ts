@@ -34,10 +34,7 @@ export const CONFIG = {
   shieldAbilitySeconds: 2.5, shieldAbilityCooldown: 10,
   pickupRespawn: 20, pickupRadius: 1.3,
   overchargeSeconds: 10, overchargeFactor: 0.5,
-  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30,
-  bikeMaxSpeed: 27, bikeReverse: 6, bikeAccel: 13, bikeBrake: 24, bikeCoast: 3.5, bikeTurn: 2.5,
-  bikeBoost: 11, bikeBoostCooldown: 4, bikeHop: 6, bikeRadius: 0.6, bikeBounce: 0.3,
-  raceCountdownMs: 3500, raceFinishGraceMs: 30000
+  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30
 } as const;
 
 export const HATS = ['aucun', 'bonnet', 'casquette', 'chapka', 'casque'] as const;
@@ -46,9 +43,9 @@ export const ABILITIES = ['grappin', 'blink', 'saut', 'bouclier'] as const;
 /** 'aucune' : capacités désactivées par l'hôte. */
 export type Ability = typeof ABILITIES[number] | 'aucune';
 
-export const GAME_MODES = ['dm', 'ctf', 'course'] as const;
+export const GAME_MODES = ['dm', 'ctf'] as const;
 export type GameMode = typeof GAME_MODES[number];
-export const MODE_LABEL: Record<GameMode, string> = { dm: 'Chacun pour soi', ctf: 'Capture du drapeau', course: 'Course de motos' };
+export const MODE_LABEL: Record<GameMode, string> = { dm: 'Chacun pour soi', ctf: 'Capture du drapeau' };
 
 /** Réglages de partie choisis par l'hôte. 0 = illimité. */
 export interface RoomSettings {
@@ -57,16 +54,11 @@ export interface RoomSettings {
   scoreToWin: number;
   /** Drapeaux à ramener pour gagner (capture du drapeau). */
   captures: number;
-  /** Tours de circuit (course). */
-  laps: number;
   timeLimitMin: number; abilities: boolean; pickups: boolean;
-  /** Course : le rayon fait chuter les autres motos. */
-  raceWeapons: boolean;
 }
-export const DEFAULT_SETTINGS: RoomSettings = { mode: 'dm', mapId: 'auto', scoreToWin: 25, captures: 3, laps: 3, timeLimitMin: 10, abilities: true, pickups: true, raceWeapons: true };
+export const DEFAULT_SETTINGS: RoomSettings = { mode: 'dm', mapId: 'auto', scoreToWin: 25, captures: 3, timeLimitMin: 10, abilities: true, pickups: true };
 export const SCORE_CHOICES = [10, 25, 50, 0] as const;
 export const CAPTURE_CHOICES = [1, 3, 5, 0] as const;
-export const LAP_CHOICES = [1, 3, 5] as const;
 export const TEAM_COLORS = [0xd9534f, 0x5b8cff] as const;
 export const TEAM_NAMES = ['Rouges', 'Bleus'] as const;
 export const FLAG_RETURN_SECONDS = 15;

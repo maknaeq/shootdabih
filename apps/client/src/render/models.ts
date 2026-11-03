@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-export interface Models { avatar: THREE.Object3D; viewmodel: THREE.Object3D; bike: THREE.Object3D | null }
+export interface Models { avatar: THREE.Object3D; viewmodel: THREE.Object3D }
 export let MODELS: Models | null = null;
 
 /** Convertit les matériaux du glTF en aplats à facettes, comme le reste du décor. */
@@ -29,9 +29,8 @@ export async function loadModels(timeoutMs = 8000): Promise<Models | null> {
     const avatar = gltf.scene.getObjectByName('Explorer');
     const viewmodel = gltf.scene.getObjectByName('Viewmodel');
     if (!avatar || !viewmodel) return null;
-    const bike = gltf.scene.getObjectByName('Bike') ?? null;
-    flatten(avatar); flatten(viewmodel); if (bike) flatten(bike);
-    MODELS = { avatar, viewmodel, bike };
+    flatten(avatar); flatten(viewmodel);
+    MODELS = { avatar, viewmodel };
     return MODELS;
   } catch {
     return null;

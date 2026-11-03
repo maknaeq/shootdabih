@@ -146,29 +146,6 @@ describe('règle de spawn', () => {
   });
 });
 
-describe('moto', () => {
-  const flat = buildMap(def(b => { b.block(0, 0, 200, 40, -1, 0, 'ground'); b.block(150, 0, 1, 40, 0, 2, 'rock'); b.ramp(60, 10, 10, 20, 0, 3, 'x', 'plank'); b.block(60, 10, 10, 20, -1, 0, 'ground'); }, [200, 40]));
-  const bike = (x: number, z: number) => { const s = makePlayerState({ x, y: 0, z }, -Math.PI / 2); s.vehicle = 'bike'; return s; };
-  it('accélère jusqu’à la vitesse max', () => {
-    const s = run(bike(5, 5), 4, { fwd: true }, flat);
-    expect(s.speed).toBeGreaterThan(CONFIG.bikeMaxSpeed - 0.5);
-    expect(s.pos.x).toBeGreaterThan(40);
-  });
-  it('tourne avec gauche et droite', () => {
-    const s = run(bike(5, 20), 1, { fwd: true, left: true }, flat);
-    expect(s.yaw).toBeGreaterThan(-Math.PI / 2 + 0.5);
-  });
-  it('rebondit sur un mur', () => {
-    const s = run(bike(140, 5), 2, { fwd: true }, flat);
-    expect(s.pos.x).toBeLessThan(150);
-  });
-  it('décolle au bout d’une rampe', () => {
-    let s = bike(40, 20); let top = 0;
-    for (let i = 0; i < 300; i++) { s = stepPlayer(s, input({ seq: i, fwd: true }), flat); if (s.pos.x > 70 && s.pos.x < 90) top = Math.max(top, s.pos.y); }
-    expect(top).toBeGreaterThan(3.2);
-  });
-});
-
 describe('protocole', () => {
   it('refuse un message mal formé', () => {
     expect(decodeClient('pas du json')).toBeNull();
@@ -177,7 +154,7 @@ describe('protocole', () => {
   });
 });
 
-for (const id of ['camp', 'polaire', 'circuit']) describe('map ' + id, () => {
+for (const id of ['camp', 'polaire']) describe('map ' + id, () => {
   const camp = getMap(id);
   it('chaque spawn est sur un sol et pas dans un mur', () => {
     camp.spawns.forEach(s => {
@@ -186,8 +163,7 @@ for (const id of ['camp', 'polaire', 'circuit']) describe('map ' + id, () => {
     });
   });
   it('chaque tremplin a un sol', () => { camp.pads.forEach(p => expect(Number.isFinite(p.y)).toBe(true)); });
-  it('respecte les règles de densité (arènes)', () => {
-    if (camp.def.race) return;
+  it('respecte les règles de densité', () => {
     const m = measureMap(camp);
     expect(m.medianSight).toBeLessThanOrEqual(9);
     expect(m.p90Sight).toBeLessThanOrEqual(36);

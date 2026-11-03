@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CONFIG, DEFAULT_SETTINGS, STREAKS, TEAM_COLORS, TEAM_NAMES, surfaceAt, type FlagState, type RaceLine, forwardFromAngles, getMap, groundAt, traceShot, unpackPlayer,
+  CONFIG, DEFAULT_SETTINGS, STREAKS, TEAM_COLORS, TEAM_NAMES, surfaceAt, type FlagState, forwardFromAngles, getMap, groundAt, traceShot, unpackPlayer,
   type Ability, type Input, type LobbyPlayer, type MapData, type NetPlayer, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg
 } from '@sdb/shared';
 import { Pickups, PICKUP_STYLE } from '../render/pickups';
@@ -66,11 +66,7 @@ export class Session {
   private flagState: FlagState[] = [];
   private teamScore: [number, number] = [0, 0];
   private carriers = new Set<string>();
-  private race: { startAt: number; laps: number; list: RaceLine[] } | null = null;
-  private lookOff = 0;
-  private lastInputYaw = 0;
-  private gates: Array<{ group: THREE.Group; mat: THREE.MeshBasicMaterial }> = [];
-  private gateGroup: THREE.Group | null = null;
+
 
   constructor(private root: HTMLElement, private code: string, name: string, private leave: () => void) {
     root.append(this.canvas);
@@ -133,28 +129,6 @@ export class Session {
     this.pickups = new Pickups(this.map);
     this.renderer.scene.add(this.pickups.group);
     if (this.flags) { this.renderer.scene.remove(this.flags.group); this.flags = null; }
-    if (this.gateGroup) { this.renderer.scene.remove(this.gateGroup); this.gateGroup = null; this.gates = []; }
-    if (this.map.def.race) {
-      const m = this.map, g = new THREE.Group();
-      m.def.race!.checkpoints.forEach((c, i) => {
-        if (i === 0) return;
-        const cx = (c.x0 + c.x1) / 2, cz = (c.z0 + c.z1) / 2, top = surfaceAt(m, cx, cz, 50), y = Number.isFinite(top) ? top : 0;
-        const across = (c.x1 - c.x0) > (c.z1 - c.z0) ? 'x' : 'z', span = across === 'x' ? c.x1 - c.x0 : c.z1 - c.z0;
-        const mat = new THREE.MeshBasicMaterial({ color: 0xe8843e, transparent: true, opacity: 0.85, fog: false });
-        const gate = new THREE.Group();
-        for (const sgn of [-1, 1]) { const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4, 0.3), mat); post.position.set(across === 'x' ? sgn * span / 2 : 0, 2, across === 'z' ? sgn * span / 2 : 0); gate.add(post); }
-        const banner = new THREE.Mesh(new THREE.BoxGeometry(across === 'x' ? span : 0.2, 0.5, across === 'z' ? span : 0.2), mat); banner.position.y = 4; gate.add(banner);
-        gate.position.set(cx, y, cz); g.add(gate); this.gates[i] = { group: gate, mat };
-      });
-      this.renderer.scene.add(g); this.gateGroup = g;
-    }
-    if (this.map.def.ctf) {
-      const m = this.map;
-      this.flags = new Flags(m.def.ctf!.bases.map(b => { const top = surfaceAt(m, b.x, b.z, 1e6); return { x: b.x, y: Number.isFinite(top) ? top : 0, z: b.z }; }));
-      this.flags.group.visible = false;
-      this.renderer.scene.add(this.flags.group);
-    }
-    if (this.predictor) this.predictor.setMap(this.map); else this.predictor = new Predictor(this.map);
   }
 
   private myAbility(): Ability { return 'aucune'; }
@@ -201,7 +175,7 @@ export class Session {
         this.state = 'playing'; this.endsAt = m.endsAt; this.roomSettings = m.settings;
         this.loadMap(m.mapId);
         this.hud.setGoal(m.settings.mode === 'ctf' ? 0 : m.settings.scoreToWin);
-        this.teamScore = [0, 0]; this.flagState = []; this.carriers.clear(); this.race = null;
+        this.teamScore = [0, 0]; this.flagState = []; this.carriers.clear();
         if (this.flags) this.flags.group.visible = m.settings.mode === 'ctf';
         this.refreshTeams();
         this.lobby.root.style.display = 'none'; this.hud.root.style.display = '';
@@ -222,8 +196,7 @@ export class Session {
       case 'respawn':
         if (m.id === this.me) {
           this.alive = true;
-          this.predictor?.teleport({ x: m.x, y: m.y, z: m.z }, m.yaw, this.myAbility(), this.isCourse() ? 'bike' : 'foot');
-          this.lookOff = 0;
+          this.predictor?.teleport({ x: m.x, y: m.y, z: m.z }, m.yaw, this.myAbility());
           this.input.yaw = m.yaw; this.input.pitch = 0;
           this.hud.setDead(null);
         } else this.interp.reset(m.id);
@@ -259,10 +232,7 @@ export class Session {
         this.carriers = new Set(m.flags.map(f => f.carrier).filter((x): x is string => !!x));
         this.flags?.set(m.flags); this.refreshTeams();
         break;
-      case 'flagEvent':
-        if (m.team === -1) { const pl = this.players.find(p => p.id === m.by); this.hud.announce(m.by === this.me ? 'Arrivée !' : `${pl?.name ?? '?'} passe la ligne`, '', performance.now() / 1000); break; }
-        this.onFlagEvent(m.kind, m.team, m.by); break;
-      case 'race': this.race = { startAt: m.startAt, laps: m.laps, list: m.list }; break;
+      case 'flagEvent': this.onFlagEvent(m.kind, m.team, m.by); break;
       case 'pickup':
         if (m.by === this.me) this.hud.announce(PICKUP_STYLE[m.kind].label, PICKUP_STYLE[m.kind].ability ? 'Capacité : touche E, pendant 30 s' : 'Bonus ramassé', performance.now() / 1000);
         else this.hud.note(`${this.nameOf(m.by)} prend ${PICKUP_STYLE[m.kind].label}`);
@@ -298,17 +268,10 @@ export class Session {
 
   private quit() { this.dispose(); this.leave(); }
 
-  private isCourse() { return this.roomSettings.mode === 'course' && this.state !== 'lobby'; }
-
-  /** Direction du tir et de la caméra : à pied le regard, à moto le cap de la moto plus le coup d'œil à la souris. */
-  private aim(): { yaw: number; pitch: number } {
-    if (this.isCourse() && this.predictor) return { yaw: this.predictor.state.yaw + this.lookOff, pitch: Math.max(-0.6, Math.min(0.5, this.input.pitch)) };
-    return { yaw: this.input.yaw, pitch: this.input.pitch };
-  }
+  private aim(): { yaw: number; pitch: number } { return { yaw: this.input.yaw, pitch: this.input.pitch }; }
 
   private makeInput(): Input {
-    const countdown = this.isCourse() && (!this.race || this.serverNow() < this.race.startAt);
-    const active = this.input.locked && this.alive && !countdown;
+    const active = this.input.locked && this.alive;
     return {
       seq: ++this.seq, dt: STEP,
       fwd: active && this.input.fwd, back: active && this.input.back, left: active && this.input.left, right: active && this.input.right,
@@ -332,7 +295,7 @@ export class Session {
     const r = traceShot(this.map, eye, forwardFromAngles(aim.yaw, aim.pitch), targets);
     this.viewmodel.kick();
     this.renderer.camera.updateMatrixWorld(true);
-    const from = this.isCourse() ? new THREE.Vector3(eye.x, eye.y - 0.3, eye.z) : this.viewmodel.tipWorld(this.tmp).clone();
+    const from = this.viewmodel.tipWorld(this.tmp).clone();
     this.effects.beam(from, new THREE.Vector3(r.end.x, r.end.y, r.end.z), now);
   }
 
@@ -364,21 +327,6 @@ export class Session {
       const scorer = by ? this.players.find(p => p.id === by)?.team ?? -1 : -1;
       this.hud.announce(scorer === mine ? 'Point pour ton équipe !' : `Les ${TEAM_NAMES[scorer] ?? ''} marquent`, by ? `${who === 'Tu' ? 'Tu as' : who + ' a'} ramené le drapeau` : '', now);
     }
-  }
-
-  private hudRace(s: { pos: { x: number; z: number }; yaw: number; speed: number }) {
-    const race = this.race, def = this.map?.def.race;
-    if (!race || !def) { this.hud.race({ rank: 0, total: this.players.length, lap: 0, laps: this.roomSettings.laps, speed: 0, countdown: 3, arrow: 0, done: false, time: null }); return; }
-    const mine = race.list.find(l => l.id === this.me);
-    const next = def.checkpoints[mine?.nextCp ?? 1];
-    const cx = (next.x0 + next.x1) / 2, cz = (next.z0 + next.z1) / 2;
-    const want = Math.atan2(-(cx - s.pos.x), -(cz - s.pos.z));
-    let arrow = want - (s.yaw + this.lookOff); arrow = Math.atan2(Math.sin(arrow), Math.cos(arrow));
-    this.gates.forEach((g, i) => { if (g) { const on = i === (mine?.nextCp ?? 1); g.mat.color.set(on ? 0xf3efe6 : 0xe8843e); g.mat.opacity = on ? 1 : 0.55; } });
-    this.hud.race({
-      rank: mine?.rank ?? 0, total: race.list.length, lap: Math.min(race.laps, (mine?.lap ?? 0) + 1), laps: race.laps,
-      speed: Math.abs(s.speed) * 3.6, countdown: (race.startAt - this.serverNow()) / 1000, arrow, done: !!mine?.done, time: mine?.time ?? null
-    });
   }
 
   private fireCooldown() {
@@ -448,41 +396,27 @@ export class Session {
       const pos = this.predictor.renderPos(dt);
       const cam = this.renderer.camera;
       const s = this.predictor.state;
-      if (this.isCourse()) {
-        // coup d'œil à la souris autour du cap, qui revient doucement dans l'axe
-        this.lookOff = Math.max(-1.1, Math.min(1.1, this.lookOff + (this.input.yaw - this.lastInputYaw)));
-        this.lookOff *= Math.exp(-dt * 1.2);
-        const camYaw = s.yaw + this.lookOff, fx = -Math.sin(camYaw), fz = -Math.cos(camYaw);
-        cam.position.set(pos.x - fx * 6.2, pos.y + 2.7, pos.z - fz * 6.2);
-        cam.lookAt(pos.x + fx * 5, pos.y + 1.3 + Math.sin(this.aim().pitch) * 4, pos.z + fz * 5);
-        if (this.meAvatar) { this.meAvatar.setVehicle(true); this.meAvatar.root.visible = this.alive; this.meAvatar.root.position.set(pos.x, pos.y, pos.z); this.meAvatar.update(dt, s.speed, s.yaw, 0); }
-      } else {
-        cam.position.set(pos.x, pos.y + CONFIG.eyeHeight, pos.z);
-        cam.rotation.set(this.input.pitch, this.input.yaw, 0);
-        this.meAvatar?.setVehicle(false);
-      }
-      this.lastInputYaw = this.input.yaw;
+      cam.position.set(pos.x, pos.y + CONFIG.eyeHeight, pos.z);
+      cam.rotation.set(this.input.pitch, this.input.yaw, 0);
       const dashBoost = s.time < s.dashUntil + 0.3 || s.time < s.padUntil ? 12 : 0;
       const targetFov = this.renderer.baseFov + dashBoost;
       if (Math.abs(cam.fov - targetFov) > 0.05) { cam.fov += (targetFov - cam.fov) * Math.min(1, dt * 10); cam.updateProjectionMatrix(); }
-      this.viewmodel?.setVisible(this.alive && !this.isCourse());
+      this.viewmodel?.setVisible(this.alive);
       this.viewmodel?.update(dt, now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.min(1, Math.hypot(s.vel.x, s.vel.z) / CONFIG.runSpeed));
       const rt = this.serverNow() - CONFIG.interpDelayMs;
       for (const [id, a] of this.avatars) {
         const p = this.interp.sample(id, rt);
         a.root.visible = !!p && p.alive;
-        a.setVehicle(this.isCourse());
         if (p) { a.root.position.set(p.x, p.y, p.z); a.update(dt, p.speed, p.yaw, p.pitch); }
       }
       this.hud.update(now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.max(0, s.dashReadyAt - s.time), this.endsAt ? (this.endsAt - this.serverNow()) / 1000 : Infinity);
       this.hudBuffs();
-      if (this.isCourse()) this.hudRace(s); else this.hud.race(null);
       const ab = s.ability, left = this.myNet ? (this.myNet.abilityUntil - this.serverNow()) / 1000 : 0;
       this.hud.ability(ab === 'aucune' ? '' : ABILITY_LABEL[ab].name, ab === 'saut' ? 0 : Math.max(0, s.abilityReadyAt - s.time), left, ab === 'saut');
     } else if (this.map) {
       this.lobbyScene(dt, now);
     }
-    if (this.meAvatar && !(playing && this.isCourse())) { this.meAvatar.root.visible = !playing && !!this.map; if (!playing) this.meAvatar.setVehicle(false); }
+    if (this.meAvatar) this.meAvatar.root.visible = !playing && !!this.map;
     this.world?.update(now);
     this.pickups?.update(now);
     if (this.flags && this.flags.group.visible) {

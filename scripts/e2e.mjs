@@ -44,13 +44,6 @@ try {
   check(!(await b.getByRole('button', { name: 'Changer la map et les réglages' }).isVisible()), "l'invité ne voit pas les réglages");
   await a.screenshot({ path: `${shots}/e2e-lobby.png` });
 
-  if (process.env.MODE === 'course') {
-    await a.getByRole('button', { name: 'Changer la map et les réglages' }).click();
-    await a.getByRole('button', { name: 'Course de motos' }).click();
-    await sleep(400);
-    await a.getByRole('button', { name: 'Fermer' }).click();
-    await sleep(300);
-  }
   if (process.env.MODE === 'ctf') {
     await a.getByRole('button', { name: 'Changer la map et les réglages' }).click();
     await a.getByRole('button', { name: 'Capture du drapeau' }).click();
@@ -69,13 +62,6 @@ try {
 
   const t0 = await a.evaluate(() => window.__sdb.predictor.state.time); await sleep(1000); const t1 = await a.evaluate(() => window.__sdb.predictor.state.time);
   console.log(`info : ${(t1 - t0).toFixed(2)} s simulées par seconde réelle chez Alice (navigateur de test sans carte graphique)`);
-  if (process.env.MODE === 'course') {
-    const c = await a.evaluate(() => ({ bike: window.__sdb.predictor.state.vehicle, cd: document.querySelector('.hud .countdown').textContent, mode: window.__sdb.roomSettings.mode, state: window.__sdb.state, race: window.__sdb.race, map: window.__sdb.map.def.id }));
-    check(c.bike === 'bike' && c.map === 'circuit' && c.race && c.race.list.length === 2, `course : à moto sur le ${c.map}, classement reçu (${c.race?.list.length} pilotes)`);
-    await sleep(3200);
-    await a.evaluate(() => window.__sdb.hud.showPrompt(false));
-    await a.screenshot({ path: `${shots}/e2e-course.png` });
-  }
   if (process.env.MODE === 'ctf') {
     const t = await b.evaluate(() => ({ bar: getComputedStyle(document.querySelector('.hud .teambar')).display !== 'none', flags: window.__sdb.flagState.length, teams: window.__sdb.players.map(p => p.team) }));
     check(t.bar && t.flags === 2 && t.teams[0] !== t.teams[1] && t.teams.every(x => x >= 0), `capture du drapeau : barre des équipes, 2 drapeaux, équipes ${t.teams.join(' et ')}`);

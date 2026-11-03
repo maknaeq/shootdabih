@@ -32,8 +32,6 @@ export interface MapDef {
   lobby: { x: number; z: number; angle: number };
   /** Capture du drapeau : emplacement des deux drapeaux (équipe 0 puis équipe 1). */
   ctf?: { bases: [{ x: number; z: number }, { x: number; z: number }] };
-  /** Course : checkpoints dans l'ordre (le premier est la ligne d'arrivée) et grille de départ. */
-  race?: { checkpoints: Array<{ x0: number; x1: number; z0: number; z1: number }>; start: { x: number; z: number; yaw: number }; gridStep: [number, number] };
   build(b: import('./builder').Builder): void;
 }
 

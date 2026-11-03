@@ -24,21 +24,20 @@ export class Predictor {
       yaw: this.state.yaw, pitch: this.state.pitch, onGround: server.onGround, time: server.time,
       dashUntil: server.dashUntil, dashReadyAt: server.dashReadyAt, padUntil: server.padUntil,
       jumpHeld: server.jumpHeld, airJumps: server.airJumps, airJumpsMax: server.airJumpsMax,
-      ability: server.ability, abilityReadyAt: server.abilityReadyAt, abilityUsedAt: server.abilityUsedAt,
-      vehicle: server.vehicle ?? 'foot', speed: server.speed ?? 0
+      ability: server.ability, abilityReadyAt: server.abilityReadyAt, abilityUsedAt: server.abilityUsedAt
     };
     this.pending = this.pending.filter(i => i.seq > ack);
     for (const i of this.pending) s = stepPlayer(s, i, this.map);
     const err = Math.hypot(s.pos.x - before.x, s.pos.y - before.y, s.pos.z - before.z);
     if (err < 2) { this.offset.x += before.x - s.pos.x; this.offset.y += before.y - s.pos.y; this.offset.z += before.z - s.pos.z; }
     else this.offset = { x: 0, y: 0, z: 0 };
-    if (s.vehicle !== 'bike') { s.yaw = this.state.yaw; s.pitch = this.state.pitch; }
+    s.yaw = this.state.yaw; s.pitch = this.state.pitch;
     this.state = s;
   }
 
-  teleport(pos: Vec3, yaw: number, ability: Ability, vehicle: 'foot' | 'bike' = 'foot') {
+  teleport(pos: Vec3, yaw: number, ability: Ability) {
     const time = this.state.time;
-    this.state = makePlayerState(pos, yaw, ability); this.state.vehicle = vehicle; this.state.time = time; this.state.dashReadyAt = time; this.state.abilityReadyAt = time;
+    this.state = makePlayerState(pos, yaw, ability); this.state.time = time; this.state.dashReadyAt = time; this.state.abilityReadyAt = time;
     this.pending = []; this.offset = { x: 0, y: 0, z: 0 };
   }
 

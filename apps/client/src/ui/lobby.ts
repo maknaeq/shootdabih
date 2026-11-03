@@ -1,5 +1,5 @@
 import {
-  CAPTURE_CHOICES, CONFIG, GAME_MODES, HATS, LAP_CHOICES, MAP_DEFS, MODE_LABEL, PARKA_COLORS, SCORE_CHOICES, TEAM_NAMES, TIME_CHOICES, mapSupports,
+  CAPTURE_CHOICES, CONFIG, GAME_MODES, HATS, MAP_DEFS, MODE_LABEL, PARKA_COLORS, SCORE_CHOICES, TEAM_NAMES, TIME_CHOICES, mapSupports,
   type Ability, type Hat, type LobbyPlayer, type RoomSettings, type RoomState, type ScoreLine
 } from '@sdb/shared';
 import { h, hex } from './dom';
@@ -157,7 +157,7 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
   }
 
   function renderSettings(s: RoomSettings) {
-    const goalOf = (x: RoomSettings) => x.mode === 'dm' ? x.scoreToWin : x.mode === 'ctf' ? x.captures : 1;
+    const goalOf = (x: RoomSettings) => x.mode === 'dm' ? x.scoreToWin : x.captures;
     const set = (patch: Partial<RoomSettings>) => {
       const next = { ...s, ...patch };
       if (next.mapId !== 'auto' && (!MAP_DEFS[next.mapId] || !mapSupports(MAP_DEFS[next.mapId], next.mode))) next.mapId = 'auto';
@@ -172,15 +172,12 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
       }));
     const goal = s.mode === 'dm'
       ? seg(SCORE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} élim.` : 'Illimité' })), s.scoreToWin, v => set({ scoreToWin: v }))
-      : s.mode === 'ctf'
-        ? seg(CAPTURE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} drapeau${v > 1 ? 'x' : ''}` : 'Illimité' })), s.captures, v => set({ captures: v }))
-        : seg(LAP_CHOICES.map(v => ({ v: v as number, label: `${v} tour${v > 1 ? 's' : ''}` })), s.laps, v => set({ laps: v }));
+      : seg(CAPTURE_CHOICES.map(v => ({ v: v as number, label: v ? `${v} drapeau${v > 1 ? 'x' : ''}` : 'Illimité' })), s.captures, v => set({ captures: v }));
     sheetBody.replaceChildren(
       h('div', { class: 'hint' }, 'Mode de jeu'), seg(GAME_MODES.map(v => ({ v, label: MODE_LABEL[v], disabled: !Object.values(MAP_DEFS).some(d => mapSupports(d, v)) })), s.mode, v => set({ mode: v })),
       h('div', { class: 'hint' }, 'Map'), maps,
       h('div', { class: 'hint' }, 'Objectif'), goal,
       h('div', { class: 'hint' }, 'Temps limite'), seg(TIME_CHOICES.map(v => ({ v: v as number, label: v ? `${v} min` : 'Sans limite', disabled: v === 0 && goalOf(s) === 0 })), s.timeLimitMin, v => set({ timeLimitMin: v })),
-      s.mode === 'course' ? h('div', { class: 'hint' }, 'Rayons pendant la course') : '', s.mode === 'course' ? seg([{ v: true, label: 'Oui, ils font chuter' }, { v: false, label: 'Non' }], s.raceWeapons, v => set({ raceWeapons: v })) : '',
       h('div', { class: 'hint' }, 'Capacités à ramasser sur la map'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.abilities, v => set({ abilities: v })),
       h('div', { class: 'hint' }, 'Bonus au sol'), seg([{ v: true, label: 'Oui' }, { v: false, label: 'Non' }], s.pickups, v => set({ pickups: v })),
       s.scoreToWin === 0 ? h('p', { class: 'hint' }, 'Éliminations illimitées : la partie s’arrête à la fin du temps.') : '');
@@ -207,7 +204,7 @@ export function lobbyView(code: string, on: Handlers): LobbyView {
         MODE_LABEL[settings.mode],
         def ? `${def.players[0]} à ${def.players[1]} joueurs` : 'Selon le nombre de joueurs',
         settings.mode === 'dm' ? (settings.scoreToWin ? `${settings.scoreToWin} éliminations` : 'Éliminations illimitées')
-          : settings.mode === 'ctf' ? (settings.captures ? `${settings.captures} drapeau${settings.captures > 1 ? 'x' : ''}` : 'Drapeaux illimités') : `${settings.laps} tour${settings.laps > 1 ? 's' : ''}`,
+          : (settings.captures ? `${settings.captures} drapeau${settings.captures > 1 ? 'x' : ''}` : 'Drapeaux illimités'),
         settings.timeLimitMin ? `${settings.timeLimitMin} min` : 'Sans limite',
         settings.abilities ? 'Capacités sur la map' : 'Sans capacités',
         settings.pickups ? 'Bonus au sol' : 'Sans bonus'
