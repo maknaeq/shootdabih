@@ -199,3 +199,5 @@ button { font: inherit; }
 .hud .speedo { position: absolute; right: 18px; bottom: 60px; font-size: 30px; font-variant-numeric: tabular-nums; }
 .hud.racing .feed { top: 110px; }
 .hud.racing .score, .hud.racing .bottom .lbl em { display: none; }
+
+.version { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); margin: 0; font-size: 12px; color: var(--muted); opacity: .7; font-variant-numeric: tabular-nums; }

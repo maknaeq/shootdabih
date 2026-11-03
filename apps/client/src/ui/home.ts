@@ -29,7 +29,7 @@ export function homeScreen(go: (path: string) => void): HTMLElement {
     }
   });
   queueMicrotask(() => input.focus());
-  return h('div', { class: 'screen' }, form);
+  return h('div', { class: 'screen' }, form, h('p', { class: 'version' }, 'Version ' + __BUILD__));
 }
 
 /** Pseudo demandé à qui arrive par un lien sans pseudo enregistré. */

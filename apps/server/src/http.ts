@@ -4,6 +4,9 @@ import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { CONFIG, decodeClient, encode, type ServerMsg } from '@sdb/shared';
 import { Rooms } from './rooms';
+import { execSync } from 'node:child_process';
+
+const VERSION = (() => { try { return execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); } catch { return 'inconnue'; } })();
 
 export interface GameServer { http: Server; rooms: Rooms; close(): Promise<void>; port(): number }
 
@@ -39,6 +42,7 @@ export function startServer(port: number, allowedOrigins: string[] = ['*'], stat
     cors(req, res, allowedOrigins);
     if (req.method === 'OPTIONS') { res.writeHead(204).end(); return; }
     if (req.url === '/health') { res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok'); return; }
+    if (req.url === '/version') { res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ version: VERSION, rooms: rooms.count })); return; }
     if (req.url === '/rooms' && req.method === 'POST') {
       const r = rooms.create();
       res.writeHead(201, { 'Content-Type': 'application/json' }).end(JSON.stringify({ code: r.code }));
