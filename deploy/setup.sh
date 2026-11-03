@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO="${REPO:-git@github.com:maknaeq/shootdabih.git}"
-BRANCH="${BRANCH:-etape-1}"
+BRANCH="${BRANCH:-main}"
 APP_DIR=/opt/shootdabih
 APP_USER=shootdabih
 PORT=8787

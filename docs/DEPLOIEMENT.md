@@ -30,7 +30,7 @@ Le VPS peut déjà héberger autre chose : le jeu n'utilise que le port 8787 en 
    - avec un nom de domaine : créer un enregistrement DNS `A` vers l'IP du VPS, puis passer `DOMAIN=jeu.exemple.fr`.
 4. **Installer** :
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/maknaeq/shootdabih/etape-1/deploy/setup.sh -o setup.sh   # si le dépôt est public
+   curl -fsSL https://raw.githubusercontent.com/maknaeq/shootdabih/main/deploy/setup.sh -o setup.sh   # si le dépôt est public
    # sinon : cloner le dépôt une fois à la main, puis lancer le script depuis le clone
    sudo DOMAIN=jeu.exemple.fr bash setup.sh
    ```
