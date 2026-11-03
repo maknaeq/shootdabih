@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { readFile, stat } from 'node:fs/promises';
+import { extname, join, normalize } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { CONFIG, decodeClient, encode, type ServerMsg } from '@sdb/shared';
 import { Rooms } from './rooms';
@@ -12,7 +14,22 @@ function cors(req: IncomingMessage, res: ServerResponse, allowed: string[]) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
 
-export function startServer(port: number, allowedOrigins: string[] = ['*']): Promise<GameServer> {
+const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.glb': 'model/gltf-binary', '.json': 'application/json', '.ico': 'image/x-icon' };
+
+/** Sert le client compilé (dossier dist) : fichiers existants, sinon index.html pour les routes du site. */
+async function serveStatic(dir: string, req: IncomingMessage, res: ServerResponse) {
+  const path = decodeURIComponent((req.url ?? '/').split('?')[0]);
+  let file = normalize(join(dir, path));
+  if (!file.startsWith(normalize(dir))) { res.writeHead(403).end(); return; }
+  try { if ((await stat(file)).isDirectory()) file = join(file, 'index.html'); } catch { file = join(dir, 'index.html'); }
+  try {
+    const body = await readFile(file);
+    const long = file.includes(`${'/'}assets${'/'}`);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream', 'Cache-Control': long ? 'public, max-age=31536000, immutable' : 'no-cache' }).end(body);
+  } catch { res.writeHead(404).end(); }
+}
+
+export function startServer(port: number, allowedOrigins: string[] = ['*'], staticDir?: string): Promise<GameServer> {
   const rooms = new Rooms();
   const http = createServer((req, res) => {
     cors(req, res, allowedOrigins);
@@ -30,6 +47,7 @@ export function startServer(port: number, allowedOrigins: string[] = ['*']): Pro
       res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ code: r.code, players: r.size, state: r.state }));
       return;
     }
+    if (staticDir && req.method === 'GET') { void serveStatic(staticDir, req, res); return; }
     res.writeHead(404).end();
   });
 
