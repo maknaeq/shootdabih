@@ -1,5 +1,5 @@
-import { CONFIG } from './config';
-import { ceilingAt, groundAt, hitsWall } from './map/collision';
+import { CONFIG, type Ability } from './config';
+import { ceilingAt, groundAt, hitsWall, segmentBlocked } from './map/collision';
 import type { MapData } from './map/types';
 import type { Vec3 } from './vec';
 
@@ -14,38 +14,52 @@ export interface PlayerState {
   dashUntil: number;
   dashReadyAt: number;
   padUntil: number;
+  jumpHeld: boolean;
+  airJumps: number;
+  /** Sauts en l'air autorisés : capacité « saut » et bonus triple saut, fixé par le serveur. */
+  airJumpsMax: number;
+  ability: Ability;
+  abilityReadyAt: number;
+  abilityUsedAt: number;
 }
 
 export interface Input {
   seq: number;
   dt: number;
   fwd: boolean; back: boolean; left: boolean; right: boolean;
-  jump: boolean; dash: boolean;
+  jump: boolean; dash: boolean; ability: boolean;
   yaw: number; pitch: number;
 }
 
-export function makePlayerState(pos: Vec3, yaw = 0): PlayerState {
-  return { pos: { ...pos }, vel: { x: 0, y: 0, z: 0 }, yaw, pitch: 0, onGround: false, time: 0, dashUntil: -1, dashReadyAt: 0, padUntil: -1 };
+export function makePlayerState(pos: Vec3, yaw = 0, ability: Ability = 'aucune'): PlayerState {
+  return {
+    pos: { ...pos }, vel: { x: 0, y: 0, z: 0 }, yaw, pitch: 0, onGround: false, time: 0, dashUntil: -1, dashReadyAt: 0, padUntil: -1,
+    jumpHeld: false, airJumps: 0, airJumpsMax: ability === 'saut' ? 1 : 0, ability, abilityReadyAt: 0, abilityUsedAt: -1
+  };
 }
 
 export function cloneState(s: PlayerState): PlayerState {
   return { ...s, pos: { ...s.pos }, vel: { ...s.vel } };
 }
 
+type Collide = Pick<MapData, 'boxes' | 'ramps' | 'pads'>;
 const SUB = 1 / 120;
 
 /** Avance l'état d'un joueur selon une entrée. Fonction pure : renvoie un nouvel état. */
-export function stepPlayer(prev: PlayerState, input: Input, map: Pick<MapData, 'boxes' | 'ramps' | 'pads'>): PlayerState {
+export function stepPlayer(prev: PlayerState, input: Input, map: Collide): PlayerState {
   const s = cloneState(prev);
   s.yaw = input.yaw;
   s.pitch = Math.max(-1.5, Math.min(1.5, input.pitch));
-  // Le dash se déclenche une fois au début du pas.
   if (input.dash && s.time >= s.dashReadyAt) {
     s.vel.x = -Math.sin(s.yaw) * CONFIG.dashSpeed;
     s.vel.z = -Math.cos(s.yaw) * CONFIG.dashSpeed;
     s.dashUntil = s.time + CONFIG.dashTime;
     s.dashReadyAt = s.time + CONFIG.dashCooldown;
   }
+  // saut en l'air : sur un nouvel appui, une fois décollé
+  if (input.jump && !s.jumpHeld && !s.onGround && s.airJumps > 0) { s.vel.y = CONFIG.airJumpSpeed; s.airJumps--; }
+  s.jumpHeld = input.jump;
+  if (input.ability && s.time >= s.abilityReadyAt) useAbility(s, map);
   let rest = Math.min(input.dt, 0.1);
   while (rest > 1e-9) {
     const dt = Math.min(rest, SUB);
@@ -56,7 +70,34 @@ export function stepPlayer(prev: PlayerState, input: Input, map: Pick<MapData, '
   return s;
 }
 
-function subStep(s: PlayerState, input: Input, map: Pick<MapData, 'boxes' | 'ramps' | 'pads'>, dt: number) {
+function useAbility(s: PlayerState, map: Collide) {
+  const eye = { x: s.pos.x, y: s.pos.y + CONFIG.eyeHeight, z: s.pos.z };
+  const c = Math.cos(s.pitch);
+  const f = { x: -Math.sin(s.yaw) * c, y: Math.sin(s.pitch), z: -Math.cos(s.yaw) * c };
+  if (s.ability === 'grappin') {
+    const far = { x: eye.x + f.x * CONFIG.grappleRange, y: eye.y + f.y * CONFIG.grappleRange, z: eye.z + f.z * CONFIG.grappleRange };
+    const t = segmentBlocked(map, eye, far);
+    if (t === null) { s.abilityReadyAt = s.time + 1; return; }
+    s.vel = { x: f.x * CONFIG.grappleSpeed, y: f.y * CONFIG.grappleSpeed + 4, z: f.z * CONFIG.grappleSpeed };
+    s.padUntil = s.time + CONFIG.grappleLock; s.onGround = false;
+    s.abilityReadyAt = s.time + CONFIG.grappleCooldown; s.abilityUsedAt = s.time;
+  } else if (s.ability === 'blink') {
+    const hx = -Math.sin(s.yaw), hz = -Math.cos(s.yaw);
+    for (let d = CONFIG.blinkDistance; d >= 1; d -= 0.5) {
+      const x = s.pos.x + hx * d, z = s.pos.z + hz * d;
+      if (hitsWall(map, x, z, s.pos.y)) continue;
+      if (segmentBlocked(map, eye, { x, y: eye.y, z }) !== null) continue;
+      s.pos.x = x; s.pos.z = z;
+      s.abilityReadyAt = s.time + CONFIG.blinkCooldown; s.abilityUsedAt = s.time;
+      return;
+    }
+    s.abilityReadyAt = s.time + 0.5;
+  } else if (s.ability === 'bouclier') {
+    s.abilityReadyAt = s.time + CONFIG.shieldAbilityCooldown; s.abilityUsedAt = s.time;
+  }
+}
+
+function subStep(s: PlayerState, input: Input, map: Collide, dt: number) {
   const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw), rx = Math.cos(s.yaw), rz = -Math.sin(s.yaw);
   let ix = 0, iz = 0;
   if (input.fwd) { ix += fx; iz += fz; }
@@ -90,6 +131,7 @@ function subStep(s: PlayerState, input: Input, map: Pick<MapData, 'boxes' | 'ram
   else if (s.onGround && s.vel.y <= 0 && s.pos.y - g < CONFIG.snapDown) { ny = g; s.vel.y = 0; }
   else s.onGround = false;
   s.pos.y = ny;
+  if (s.onGround) s.airJumps = s.airJumpsMax;
 
   if (s.onGround) {
     for (const p of map.pads) {

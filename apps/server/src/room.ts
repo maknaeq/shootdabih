@@ -1,6 +1,8 @@
 import {
-  CONFIG, PARKA_COLORS, chooseSpawn, cleanName, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShot,
-  type ClientMsg, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PlayerState, type RoomState, type ScoreLine, type ServerMsg, type Vec3
+  ABILITIES, CONFIG, DEFAULT_SETTINGS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
+  chooseSpawn, cleanName, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
+  type Ability, type ClientMsg, type Hat, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PickupKind, type PickupState,
+  type PlayerState, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg, type Vec3
 } from '@sdb/shared';
 
 export interface Clock { now(): number }
@@ -10,6 +12,8 @@ interface Player {
   id: string;
   name: string;
   color: number;
+  hat: Hat;
+  ability: Ability;
   send(m: ServerMsg): void;
   state: PlayerState;
   alive: boolean;
@@ -22,7 +26,15 @@ interface Player {
   queue: Input[];
   ack: number;
   history: Array<{ t: number; pos: Vec3 }>;
+  overchargeUntil: number;
+  pierceUntil: number;
+  jumpsUntil: number;
+  shieldBuffUntil: number;
+  shieldAbilityUntil: number;
+  lastAbilityUse: number;
 }
+
+interface PickupSpot { pos: Vec3; kind: PickupKind; active: boolean; respawnAt: number }
 
 const HISTORY_MS = 1000;
 const END_SCREEN_MS = 8000;
@@ -31,15 +43,20 @@ export class Room {
   readonly players = new Map<string, Player>();
   hostId: string | null = null;
   state: RoomState = 'lobby';
+  settings: RoomSettings = { ...DEFAULT_SETTINGS };
   emptySince: number;
+  mapId: string;
   private map: MapData;
   private endsAt = 0;
   private endedAt = 0;
   private lastSnapshot = 0;
   private lastUsed: number[] = [];
+  private pickups: PickupSpot[] = [];
   private nextId = 1;
+  private lastMapId = '';
 
-  constructor(readonly code: string, readonly mapId: string, private clock: Clock = realClock, private rand: () => number = Math.random) {
+  constructor(readonly code: string, mapId: string, private clock: Clock = realClock, private rand: () => number = Math.random) {
+    this.mapId = mapId;
     this.map = getMap(mapId);
     this.emptySince = clock.now();
   }
@@ -52,15 +69,17 @@ export class Room {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = PARKA_COLORS.find(c => !used.has(c)) ?? PARKA_COLORS[0];
     const p: Player = {
-      id, name: cleanName(rawName), color, send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
-      kills: 0, deaths: 0, streak: 0, bestStreak: 0, lastFireAt: -1e9, queue: [], ack: -1, history: []
+      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'saut', send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
+      kills: 0, deaths: 0, streak: 0, bestStreak: 0, lastFireAt: -1e9, queue: [], ack: -1, history: [],
+      overchargeUntil: 0, pierceUntil: 0, jumpsUntil: 0, shieldBuffUntil: 0, shieldAbilityUntil: 0, lastAbilityUse: -1
     };
     this.players.set(id, p);
     if (!this.hostId) this.hostId = id;
     send({ t: 'welcome', you: id, room: this.code, mapId: this.mapId, hostId: this.hostId, serverTime: this.clock.now() });
     this.broadcastLobby();
     if (this.state === 'playing') {
-      send({ t: 'start', mapId: this.mapId, endsAt: this.endsAt });
+      send({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
+      send({ t: 'pickups', list: this.pickupList() });
       p.respawnAt = this.clock.now();
       send({ t: 'scores', list: this.scores() });
     }
@@ -87,8 +106,33 @@ export class Room {
         break;
       case 'fire': this.fire(p, msg.yaw, msg.pitch, msg.renderTime); break;
       case 'ping': p.send({ t: 'pong', c: msg.c, serverTime: this.clock.now() }); break;
+      case 'customize': {
+        const taken = [...this.players.values()].some(q => q !== p && q.color === msg.color);
+        if (!taken) p.color = msg.color;
+        p.hat = msg.hat;
+        p.ability = msg.ability;
+        if (this.state === 'playing' && p.alive) this.applyLoadout(p);
+        this.broadcastLobby();
+        break;
+      }
+      case 'settings':
+        if (id !== this.hostId) { p.send({ t: 'error', message: "Seul l'hôte peut changer les réglages." }); break; }
+        if (this.state === 'playing') break;
+        this.settings = msg.settings;
+        this.broadcastLobby();
+        break;
       case 'join': break;
     }
+  }
+
+  private chooseMap(): string {
+    if (this.settings.mapId !== 'auto' && MAP_DEFS[this.settings.mapId]) return this.settings.mapId;
+    const n = this.players.size;
+    const fits = Object.values(MAP_DEFS).filter(d => n >= d.players[0] && n <= d.players[1]).map(d => d.id);
+    const pool = fits.length ? fits : Object.keys(MAP_DEFS);
+    const fresh = pool.filter(id => id !== this.lastMapId);
+    const list = fresh.length ? fresh : pool;
+    return list[Math.floor(this.rand() * list.length)];
   }
 
   start(byId: string) {
@@ -98,16 +142,30 @@ export class Room {
     if (this.state === 'playing') return;
     if (this.players.size < CONFIG.minPlayersToStart) { p.send({ t: 'error', message: 'Il faut au moins 2 joueurs.' }); return; }
     const now = this.clock.now();
+    this.mapId = this.chooseMap(); this.lastMapId = this.mapId;
+    this.map = getMap(this.mapId);
     this.state = 'playing';
-    this.endsAt = now + CONFIG.matchMaxSeconds * 1000;
+    this.endsAt = this.settings.timeLimitMin > 0 ? now + this.settings.timeLimitMin * 60_000 : 0;
     this.lastUsed = [];
+    this.pickups = this.settings.pickups ? this.map.pickups.map((pos, i) => ({ pos, kind: PICKUP_KINDS[i % PICKUP_KINDS.length], active: true, respawnAt: 0 })) : [];
     for (const q of this.players.values()) {
       q.kills = 0; q.deaths = 0; q.streak = 0; q.bestStreak = 0; q.alive = false; q.respawnAt = now; q.lastFireAt = -1e9; q.queue = []; q.history = [];
+      q.overchargeUntil = 0; q.pierceUntil = 0; q.jumpsUntil = 0; q.shieldBuffUntil = 0; q.shieldAbilityUntil = 0;
     }
     this.broadcastLobby();
-    this.broadcast({ t: 'start', mapId: this.mapId, endsAt: this.endsAt });
+    this.broadcast({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
+    this.broadcast({ t: 'pickups', list: this.pickupList() });
     for (const q of this.players.values()) this.respawn(q, now);
     this.broadcast({ t: 'scores', list: this.scores() });
+  }
+
+  private effectiveAbility(p: Player): Ability { return this.settings.abilities ? p.ability : 'aucune'; }
+
+  /** Recalcule ce qui dépend de la capacité et des bonus : sauts en l'air autorisés. */
+  private applyLoadout(p: Player) {
+    const now = this.clock.now();
+    p.state.ability = this.effectiveAbility(p);
+    p.state.airJumpsMax = (p.state.ability === 'saut' ? 1 : 0) + (now < p.jumpsUntil ? CONFIG.jumpsBonus : 0);
   }
 
   tick() {
@@ -119,20 +177,49 @@ export class Room {
           if (now >= p.respawnAt) this.respawn(p, now);
           continue;
         }
+        this.applyLoadout(p);
         // une entrée par pas en régime normal, un peu plus pour rattraper un retard : le mouvement reste régulier
         const n = Math.min(p.queue.length, p.queue.length > 8 ? 4 : p.queue.length > 3 ? 2 : 1);
         for (const i of p.queue.splice(0, n)) { p.state = stepPlayer(p.state, i, this.map); p.ack = i.seq; }
+        if (p.state.abilityUsedAt !== p.lastAbilityUse) {
+          p.lastAbilityUse = p.state.abilityUsedAt;
+          if (p.state.ability === 'bouclier') p.shieldAbilityUntil = now + CONFIG.shieldAbilitySeconds * 1000;
+        }
         if (p.state.pos.y < CONFIG.killPlaneY) this.respawn(p, now);
         p.history.push({ t: now, pos: { ...p.state.pos } });
         while (p.history.length && p.history[0].t < now - HISTORY_MS) p.history.shift();
+        this.collectPickups(p, now);
       }
-      if (now >= this.endsAt) this.endMatch();
+      this.pickups.forEach((s, i) => {
+        if (!s.active && now >= s.respawnAt) {
+          s.active = true; s.kind = PICKUP_KINDS[(PICKUP_KINDS.indexOf(s.kind) + 1 + i) % PICKUP_KINDS.length];
+          this.broadcast({ t: 'pickups', list: this.pickupList() });
+        }
+      });
+      if (this.endsAt && now >= this.endsAt) this.endMatch();
       if (now - this.lastSnapshot >= 1000 / CONFIG.snapshotRate - 1) { this.lastSnapshot = now; this.sendSnapshots(now); }
     } else if (this.state === 'ended' && now - this.endedAt >= END_SCREEN_MS) {
       this.state = 'lobby';
       this.broadcastLobby();
     }
   }
+
+  private collectPickups(p: Player, now: number) {
+    this.pickups.forEach((s, i) => {
+      if (!s.active) return;
+      const d = Math.hypot(p.state.pos.x - s.pos.x, p.state.pos.z - s.pos.z);
+      if (d > CONFIG.pickupRadius || Math.abs(p.state.pos.y - s.pos.y) > 1.5) return;
+      s.active = false; s.respawnAt = now + CONFIG.pickupRespawn * 1000;
+      if (s.kind === 'overcharge') p.overchargeUntil = now + CONFIG.overchargeSeconds * 1000;
+      if (s.kind === 'pierce') p.pierceUntil = now + CONFIG.pierceSeconds * 1000;
+      if (s.kind === 'jumps') { p.jumpsUntil = now + CONFIG.jumpsSeconds * 1000; this.applyLoadout(p); p.state.airJumps = p.state.airJumpsMax; }
+      if (s.kind === 'shield') p.shieldBuffUntil = now + CONFIG.shieldBuffSeconds * 1000;
+      this.broadcast({ t: 'pickup', i, by: p.id, kind: s.kind });
+      this.broadcast({ t: 'pickups', list: this.pickupList() });
+    });
+  }
+
+  private pickupList(): PickupState[] { return this.pickups.map((s, i) => ({ i, kind: s.kind, active: s.active })); }
 
   private respawn(p: Player, now: number) {
     const enemies = [...this.players.values()].filter(q => q !== p && q.alive).map(q => q.state.pos);
@@ -141,9 +228,11 @@ export class Room {
     const s = this.map.spawns[k];
     const yaw = openYaw(this.map, s);
     const time = p.state.time;
-    p.state = makePlayerState(s, yaw);
-    p.state.time = time;
-    p.state.dashReadyAt = time;
+    p.state = makePlayerState(s, yaw, this.effectiveAbility(p));
+    p.state.time = time; p.state.dashReadyAt = time; p.state.abilityReadyAt = time;
+    p.lastAbilityUse = p.state.abilityUsedAt;
+    p.overchargeUntil = 0; p.pierceUntil = 0; p.jumpsUntil = 0; p.shieldBuffUntil = 0; p.shieldAbilityUntil = 0;
+    this.applyLoadout(p);
     p.alive = true;
     p.history = [{ t: now, pos: { ...s } }];
     this.broadcast({ t: 'respawn', id: p.id, x: s.x, y: s.y, z: s.z, yaw });
@@ -164,23 +253,43 @@ export class Room {
     return p.state.pos;
   }
 
+  private fireCooldownMs(p: Player, now: number) { return CONFIG.fireCooldown * 1000 * (now < p.overchargeUntil ? CONFIG.overchargeFactor : 1); }
+
   private fire(p: Player, yaw: number, pitch: number, renderTime: number) {
     if (this.state !== 'playing' || !p.alive) return;
     const now = this.clock.now();
-    if (now - p.lastFireAt < CONFIG.fireCooldown * 1000 - 60) return;
+    if (now - p.lastFireAt < this.fireCooldownMs(p, now) - 60) return;
     p.lastFireAt = now;
     const rewindTo = Math.max(now - CONFIG.maxRewindMs - CONFIG.interpDelayMs, Math.min(now, renderTime));
     const targets = [...this.players.values()].filter(q => q !== p && q.alive).map(q => ({ id: q.id, pos: this.posAt(q, rewindTo) }));
     const origin = eyeOf(p.state);
-    const r = traceShot(this.map, origin, forwardFromAngles(yaw, pitch), targets);
-    this.broadcast({ t: 'shot', by: p.id, from: [origin.x, origin.y, origin.z], to: [r.end.x, r.end.y, r.end.z] });
-    if (!r.hitId) return;
-    const v = this.players.get(r.hitId)!;
+    const r = traceShotAll(this.map, origin, forwardFromAngles(yaw, pitch), targets);
+    const pierce = now < p.pierceUntil;
+    const hits = pierce ? r.hits : r.hits.slice(0, 1);
+    const end = !pierce && hits.length ? targets.find(t => t.id === hits[0])!.pos : null;
+    const to = end ? { x: end.x, y: end.y + 1.1, z: end.z } : r.end;
+    this.broadcast({ t: 'shot', by: p.id, from: [origin.x, origin.y, origin.z], to: [to.x, to.y, to.z] });
+    let killed = false;
+    for (const id of hits) {
+      const v = this.players.get(id)!;
+      if (now < v.shieldAbilityUntil) { v.shieldAbilityUntil = 0; this.broadcast({ t: 'shieldHit', id: v.id, by: p.id }); continue; }
+      if (now < v.shieldBuffUntil) { v.shieldBuffUntil = 0; this.broadcast({ t: 'shieldHit', id: v.id, by: p.id }); continue; }
+      this.kill(p, v, now);
+      killed = true;
+    }
+    if (killed) {
+      this.broadcast({ t: 'scores', list: this.scores() });
+      if (this.settings.scoreToWin > 0 && p.kills >= this.settings.scoreToWin) this.endMatch();
+    }
+  }
+
+  private kill(p: Player, v: Player, now: number) {
+    const victimStreak = v.streak;
     v.alive = false; v.respawnAt = now + CONFIG.respawnDelay * 1000; v.deaths++; v.streak = 0;
     p.kills++; p.streak++; p.bestStreak = Math.max(p.bestStreak, p.streak);
     this.broadcast({ t: 'kill', killer: p.id, victim: v.id });
-    this.broadcast({ t: 'scores', list: this.scores() });
-    if (p.kills >= CONFIG.scoreToWin) this.endMatch();
+    if (STREAKS[p.streak]) this.broadcast({ t: 'streak', id: p.id, n: p.streak });
+    if (victimStreak >= 3) this.broadcast({ t: 'shutdown', killer: p.id, victim: v.id, n: victimStreak });
   }
 
   private endMatch() {
@@ -206,12 +315,18 @@ export class Room {
     const players: NetPlayer[] = [...this.players.values()].map(p => ({
       id: p.id, x: p.state.pos.x, y: p.state.pos.y, z: p.state.pos.z, yaw: p.state.yaw, pitch: p.state.pitch, alive: p.alive,
       vx: p.state.vel.x, vy: p.state.vel.y, vz: p.state.vel.z, dashReadyAt: p.state.dashReadyAt, dashUntil: p.state.dashUntil,
-      padUntil: p.state.padUntil, onGround: p.state.onGround, time: p.state.time
+      padUntil: p.state.padUntil, onGround: p.state.onGround, time: p.state.time,
+      jumpHeld: p.state.jumpHeld, airJumps: p.state.airJumps, airJumpsMax: p.state.airJumpsMax,
+      abilityReadyAt: p.state.abilityReadyAt, abilityUsedAt: p.state.abilityUsedAt,
+      overchargeUntil: p.overchargeUntil, pierceUntil: p.pierceUntil, jumpsUntil: p.jumpsUntil,
+      shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak
     }));
     for (const p of this.players.values()) p.send({ t: 'snapshot', time: now, ack: p.ack, players });
   }
 
-  private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color })); }
-  private broadcastLobby() { this.broadcast({ t: 'lobby', players: this.lobbyPlayers(), hostId: this.hostId ?? '', state: this.state }); }
+  private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, hat: p.hat, ability: p.ability })); }
+  private broadcastLobby() { this.broadcast({ t: 'lobby', players: this.lobbyPlayers(), hostId: this.hostId ?? '', state: this.state, settings: this.settings }); }
   private broadcast(m: ServerMsg) { for (const p of this.players.values()) p.send(m); }
 }
+
+export { ABILITIES };

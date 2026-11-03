@@ -27,8 +27,31 @@ export const CONFIG = {
   maxRewindMs: 200,
   interpDelayMs: 150,
   killPlaneY: -25,
-  emptyRoomTtlMs: 5 * 60 * 1000
+  emptyRoomTtlMs: 5 * 60 * 1000,
+  airJumpSpeed: 8.5,
+  grappleRange: 32, grappleSpeed: 24, grappleLock: 0.45, grappleCooldown: 6,
+  blinkDistance: 8, blinkCooldown: 5,
+  shieldAbilitySeconds: 2.5, shieldAbilityCooldown: 10,
+  pickupRespawn: 20, pickupRadius: 1.3,
+  overchargeSeconds: 10, overchargeFactor: 0.5,
+  pierceSeconds: 10, jumpsSeconds: 15, jumpsBonus: 2, shieldBuffSeconds: 30
 } as const;
+
+export const HATS = ['aucun', 'bonnet', 'casquette', 'chapka', 'casque'] as const;
+export type Hat = typeof HATS[number];
+export const ABILITIES = ['grappin', 'blink', 'saut', 'bouclier'] as const;
+/** 'aucune' : capacités désactivées par l'hôte. */
+export type Ability = typeof ABILITIES[number] | 'aucune';
+
+/** Réglages de partie choisis par l'hôte. 0 = illimité. */
+export interface RoomSettings { mapId: string; scoreToWin: number; timeLimitMin: number; abilities: boolean; pickups: boolean }
+export const DEFAULT_SETTINGS: RoomSettings = { mapId: 'auto', scoreToWin: 25, timeLimitMin: 10, abilities: true, pickups: true };
+export const SCORE_CHOICES = [10, 25, 50, 0] as const;
+export const TIME_CHOICES = [5, 10, 15, 20, 0] as const;
+export const PICKUP_KINDS = ['overcharge', 'pierce', 'jumps', 'shield'] as const;
+export type PickupKind = typeof PICKUP_KINDS[number];
+/** Paliers de série annoncés. */
+export const STREAKS: Record<number, string> = { 3: 'Triplé', 5: 'Inarrêtable', 10: 'Légendaire', 15: 'Divin', 20: 'Hors catégorie' };
 
 export type Config = typeof CONFIG;
 

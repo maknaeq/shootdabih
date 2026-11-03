@@ -79,13 +79,61 @@ describe('salon', () => {
     advance(50);
     const before = { ...room.players.get(a)!.state.pos };
     const yaw = room.players.get(a)!.state.yaw;
-    const inputs = Array.from({ length: 30 }, (_, i) => ({ seq: i + 1, dt: 1 / 60, fwd: true, back: false, left: false, right: false, jump: false, dash: false, yaw, pitch: 0 }));
+    const inputs = Array.from({ length: 30 }, (_, i) => ({ seq: i + 1, dt: 1 / 60, fwd: true, back: false, left: false, right: false, jump: false, dash: false, ability: false, yaw, pitch: 0 }));
     room.handle(a, { t: 'input', inputs });
     advance(700);
     const after = room.players.get(a)!.state.pos;
     expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeGreaterThan(1);
     const snap = [...inbox.a].reverse().find(m => m.t === 'snapshot');
     expect(snap && snap.t === 'snapshot' && snap.ack).toBe(30);
+  });
+});
+
+describe('ajouts', () => {
+  it('annonce une série à 3 et la fin de série', () => {
+    const { room, inbox, a, b, advance, place, aimAtB, now } = setup();
+    room.handle(a, { t: 'start' });
+    for (let i = 0; i < 3; i++) { advance(1300); place(); const { yaw, pitch } = aimAtB(); room.handle(a, { t: 'fire', seq: i, yaw, pitch, renderTime: now() }); }
+    expect(inbox.b.some(m => m.t === 'streak' && m.id === a && m.n === 3)).toBe(true);
+    // Bob arrête la série d'Alice
+    advance(1300); place();
+    const pa = room.players.get(a)!, pb = room.players.get(b)!;
+    const ang = anglesTo({ ...pb.state.pos, y: pb.state.pos.y + CONFIG.eyeHeight }, { ...pa.state.pos, y: pa.state.pos.y + 1 });
+    room.handle(b, { t: 'fire', seq: 9, yaw: ang.yaw, pitch: ang.pitch, renderTime: now() });
+    expect(inbox.a.some(m => m.t === 'shutdown' && m.killer === b && m.victim === a && m.n === 3)).toBe(true);
+  });
+
+  it('le bouclier encaisse un tir', () => {
+    const { room, inbox, a, b, advance, place, aimAtB, now } = setup();
+    room.handle(a, { t: 'start' });
+    advance(50); place();
+    room.players.get(b)!.shieldBuffUntil = now() + 10000;
+    const { yaw, pitch } = aimAtB();
+    room.handle(a, { t: 'fire', seq: 1, yaw, pitch, renderTime: now() });
+    expect(room.players.get(b)!.alive).toBe(true);
+    expect(inbox.a.some(m => m.t === 'shieldHit' && m.id === b)).toBe(true);
+  });
+
+  it("réglages de l'hôte : éliminations illimitées, l'invité ne peut rien changer", () => {
+    const { room, inbox, a, b, advance, place, aimAtB, now } = setup();
+    room.handle(b, { t: 'settings', settings: { mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
+    expect(room.settings.scoreToWin).toBe(25);
+    room.handle(a, { t: 'settings', settings: { mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
+    room.handle(a, { t: 'start' });
+    expect(room.players.get(a)!.state.ability).toBe('aucune');
+    for (let i = 0; i < 26; i++) { advance(1300); place(); const { yaw, pitch } = aimAtB(); room.handle(a, { t: 'fire', seq: i, yaw, pitch, renderTime: now() }); }
+    expect(room.state).toBe('playing');
+    advance(5 * 60_000);
+    expect(inbox.a.some(m => m.t === 'matchEnd')).toBe(true);
+  });
+
+  it('personnalisation : couleur libre, pas celle d’un autre', () => {
+    const { room, a, b } = setup();
+    const colorA = room.players.get(a)!.color;
+    room.handle(b, { t: 'customize', color: colorA, hat: 'chapka', ability: 'grappin' });
+    expect(room.players.get(b)!.color).not.toBe(colorA);
+    expect(room.players.get(b)!.hat).toBe('chapka');
+    expect(room.players.get(b)!.ability).toBe('grappin');
   });
 });
 

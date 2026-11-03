@@ -6,6 +6,7 @@ export class InputState {
   private keys = new Set<string>();
   private firePressed = false;
   private dashPressed = false;
+  private abilityPressed = false;
   private jumpHeld = false;
   onTab: (down: boolean) => void = () => {};
   onLockChange: (locked: boolean) => void = () => {};
@@ -18,6 +19,7 @@ export class InputState {
       if (!this.locked) return;
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (!e.repeat && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) this.dashPressed = true;
+      if (!e.repeat && (e.code === 'KeyE' || e.code === 'KeyF')) this.abilityPressed = true;
       this.keys.add(e.code);
     }, o);
     window.addEventListener('keyup', e => { if (e.code === 'Tab') { this.onTab(false); return; } this.keys.delete(e.code); }, o);
@@ -57,6 +59,7 @@ export class InputState {
   /** Lu une seule fois : renvoie vrai si le joueur a demandé un tir depuis la dernière lecture. */
   takeFire() { const f = this.firePressed; this.firePressed = false; return f; }
   takeDash() { const d = this.dashPressed; this.dashPressed = false; return d; }
+  takeAbility() { const a = this.abilityPressed; this.abilityPressed = false; return a; }
 
   dispose() { this.abort.abort(); this.unlock(); }
 }

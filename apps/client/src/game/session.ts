@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import {
-  CONFIG, forwardFromAngles, getMap, traceShot,
-  type Input, type LobbyPlayer, type MapData, type RoomState, type ScoreLine, type ServerMsg
+  CONFIG, DEFAULT_SETTINGS, STREAKS, forwardFromAngles, getMap, traceShot,
+  type Ability, type Input, type LobbyPlayer, type MapData, type NetPlayer, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg
 } from '@sdb/shared';
+import { Pickups, PICKUP_STYLE } from '../render/pickups';
+import { ABILITY_LABEL } from '../ui/lobby';
 import { Connection } from '../net/connection';
 import { Renderer, loadSettings, saveSettings } from '../render/renderer';
 import { buildWorld } from '../render/world';
@@ -52,6 +54,10 @@ export class Session {
   private settings = loadSettings();
   private tmp = new THREE.Vector3();
   private disposed = false;
+  private roomSettings: RoomSettings = { ...DEFAULT_SETTINGS };
+  private pickups: Pickups | null = null;
+  private myNet: NetPlayer | null = null;
+  private looks = new Map<string, string>();
 
   constructor(private root: HTMLElement, private code: string, name: string, private leave: () => void) {
     root.append(this.canvas);
@@ -60,7 +66,12 @@ export class Session {
     this.input = new InputState(this.canvas);
     this.input.sensitivity = this.settings.sensitivity;
     this.hud = new Hud(this.settingsPanel());
-    this.lobby = lobbyView(code, () => this.conn.send({ t: 'start' }), () => this.quit());
+    this.lobby = lobbyView(code, {
+      start: () => this.conn.send({ t: 'start' }),
+      leave: () => this.quit(),
+      customize: l => this.conn.send({ t: 'customize', color: l.color, hat: l.hat, ability: l.ability }),
+      settings: s => this.conn.send({ t: 'settings', settings: s })
+    });
     root.append(this.hud.root, this.hud.board, this.hud.prompt, this.lobby.root);
     this.hud.root.style.display = 'none';
     this.input.onTab = down => { if (this.state === 'playing') this.hud.showBoard(down); };
@@ -98,12 +109,21 @@ export class Session {
   private applySettings() { this.input.sensitivity = this.settings.sensitivity; this.renderer.apply(this.settings); saveSettings(this.settings); }
 
   private loadMap(id: string) {
-    if (this.map) return;
+    if (this.map && this.map.def.id === id) return;
+    if (this.world) this.renderer.scene.remove(this.world.group);
+    if (this.pickups) this.renderer.scene.remove(this.pickups.group);
     this.map = getMap(id);
     this.renderer.setMap(this.map);
     this.world = buildWorld(this.map);
     this.renderer.scene.add(this.world.group);
-    this.predictor = new Predictor(this.map);
+    this.pickups = new Pickups(this.map);
+    this.renderer.scene.add(this.pickups.group);
+    if (this.predictor) this.predictor.setMap(this.map); else this.predictor = new Predictor(this.map);
+  }
+
+  private myAbility(): Ability {
+    const me = this.players.find(p => p.id === this.me);
+    return this.roomSettings.abilities && me ? me.ability : 'aucune';
   }
 
   private colorOf(id: string) { return this.players.find(p => p.id === id)?.color ?? 0xf3efe6; }
@@ -118,17 +138,30 @@ export class Session {
       case 'lobby': {
         this.players = m.players; this.hostId = m.hostId;
         for (const [id, a] of this.avatars) if (!m.players.some(p => p.id === id)) { this.renderer.scene.remove(a.root); a.dispose(); this.avatars.delete(id); this.interp.remove(id); }
-        for (const p of m.players) if (p.id !== this.me && !this.avatars.has(p.id)) { const a = new Avatar(p.color, p.name); a.root.visible = false; this.avatars.set(p.id, a); this.renderer.scene.add(a.root); }
-        if (!this.viewmodel && m.players.some(p => p.id === this.me)) this.viewmodel = new Viewmodel(this.renderer.camera, this.colorOf(this.me));
+        this.roomSettings = m.settings;
+        for (const p of m.players) {
+          if (p.id === this.me) continue;
+          let a = this.avatars.get(p.id);
+          if (!a) { a = new Avatar(p.color, p.name, p.hat); a.root.visible = false; this.avatars.set(p.id, a); this.renderer.scene.add(a.root); }
+          const look = p.color + ':' + p.hat;
+          if (this.looks.get(p.id) !== look) { a.setColor(p.color); a.setHat(p.hat); this.looks.set(p.id, look); }
+        }
+        const mine = m.players.find(p => p.id === this.me);
+        if (mine) {
+          const look = String(mine.color);
+          if (this.looks.get(this.me) !== look) { this.viewmodel?.group.removeFromParent(); this.viewmodel = new Viewmodel(this.renderer.camera, mine.color); this.looks.set(this.me, look); }
+        }
         const prev = this.state;
         this.state = m.state;
-        this.lobby.update(m.players, m.hostId, this.me, m.state);
+        this.lobby.update(m.players, m.hostId, this.me, m.state, m.settings);
         if (m.state !== 'playing') this.showLobby();
-        if (prev === 'ended' && m.state === 'lobby') this.lobby.update(m.players, m.hostId, this.me, m.state);
+        void prev;
         break;
       }
       case 'start':
-        this.state = 'playing'; this.endsAt = m.endsAt;
+        this.state = 'playing'; this.endsAt = m.endsAt; this.roomSettings = m.settings;
+        this.loadMap(m.mapId);
+        this.hud.setGoal(m.settings.scoreToWin);
         this.lobby.root.style.display = 'none'; this.hud.root.style.display = '';
         this.hud.setDead(null);
         if (!this.input.locked) this.hud.showPrompt(true);
@@ -136,15 +169,17 @@ export class Session {
       case 'snapshot': {
         this.interp.push(m.time, m.players);
         const mine = m.players.find(p => p.id === this.me);
+        if (mine) this.myNet = mine;
         if (mine && this.predictor) {
           if (mine.alive && this.alive) this.predictor.reconcile(mine, m.ack);
         }
+        for (const p of m.players) this.avatars.get(p.id)?.setShield(p.shield);
         break;
       }
       case 'respawn':
         if (m.id === this.me) {
           this.alive = true;
-          this.predictor?.teleport({ x: m.x, y: m.y, z: m.z }, m.yaw);
+          this.predictor?.teleport({ x: m.x, y: m.y, z: m.z }, m.yaw, this.myAbility());
           this.input.yaw = m.yaw; this.input.pitch = 0;
           this.hud.setDead(null);
         } else this.interp.reset(m.id);
@@ -173,6 +208,23 @@ export class Session {
         this.clockOffset += (est - this.clockOffset) * 0.3;
         break;
       }
+      case 'pickups': this.pickups?.set(m.list); break;
+      case 'pickup':
+        if (m.by === this.me) this.hud.announce(PICKUP_STYLE[m.kind].label, 'Bonus ramassé', performance.now() / 1000);
+        else this.hud.note(`${this.nameOf(m.by)} prend ${PICKUP_STYLE[m.kind].label}`);
+        break;
+      case 'streak':
+        if (m.id === this.me) this.hud.announce(STREAKS[m.n] ?? 'Série', `${m.n} éliminations sans mourir`, performance.now() / 1000);
+        else this.hud.note(`${this.nameOf(m.id)} : ${STREAKS[m.n] ?? 'série'}`);
+        break;
+      case 'shutdown':
+        if (m.killer === this.me) this.hud.announce('Fin de série', `Tu arrêtes ${this.nameOf(m.victim)} à ${m.n}`, performance.now() / 1000);
+        else this.hud.note(`${this.nameOf(m.killer)} arrête la série de ${this.nameOf(m.victim)}`);
+        break;
+      case 'shieldHit':
+        if (m.id === this.me) this.hud.announce('Bouclier', 'Il vient de te sauver', performance.now() / 1000);
+        else if (m.by === this.me) this.hud.note(`Bouclier de ${this.nameOf(m.id)}`);
+        break;
       case 'error': this.lobby.error(m.message); break;
     }
   }
@@ -193,14 +245,14 @@ export class Session {
     return {
       seq: ++this.seq, dt: STEP,
       fwd: active && this.input.fwd, back: active && this.input.back, left: active && this.input.left, right: active && this.input.right,
-      jump: active && this.input.jump, dash: active && this.input.takeDash(),
+      jump: active && this.input.jump, dash: active && this.input.takeDash(), ability: active && this.input.takeAbility(),
       yaw: this.input.yaw, pitch: this.input.pitch
     };
   }
 
   private fire(now: number) {
     if (!this.predictor || !this.map || !this.viewmodel) return;
-    if (now - this.lastFireAt < CONFIG.fireCooldown) return;
+    if (now - this.lastFireAt < this.fireCooldown()) return;
     this.lastFireAt = now;
     const renderTime = this.serverNow() - CONFIG.interpDelayMs;
     this.conn.send({ t: 'fire', seq: this.seq, yaw: this.input.yaw, pitch: this.input.pitch, renderTime });
@@ -213,6 +265,23 @@ export class Session {
     this.viewmodel.kick();
     this.renderer.camera.updateMatrixWorld(true);
     this.effects.beam(this.viewmodel.tipWorld(this.tmp).clone(), new THREE.Vector3(r.end.x, r.end.y, r.end.z), now);
+  }
+
+  private fireCooldown() {
+    const over = this.myNet && this.myNet.overchargeUntil > this.serverNow();
+    return CONFIG.fireCooldown * (over ? CONFIG.overchargeFactor : 1);
+  }
+
+  private hudBuffs() {
+    const n = this.myNet, sn = this.serverNow();
+    const list: Array<[string, number, string]> = [];
+    if (n && n.alive) {
+      if (n.overchargeUntil > sn) list.push([PICKUP_STYLE.overcharge.label, (n.overchargeUntil - sn) / 1000, '#f3c84a']);
+      if (n.pierceUntil > sn) list.push([PICKUP_STYLE.pierce.label, (n.pierceUntil - sn) / 1000, '#7fd6ff']);
+      if (n.jumpsUntil > sn) list.push([PICKUP_STYLE.jumps.label, (n.jumpsUntil - sn) / 1000, '#9fd6a0']);
+      if (n.shield) list.push(['Bouclier', 0, '#f3efe6']);
+    }
+    this.hud.buffs(list, !!(n && n.alive && n.shield));
   }
 
   private frame(t: number) {
@@ -237,14 +306,17 @@ export class Session {
       const targetFov = this.renderer.baseFov + dashBoost;
       if (Math.abs(cam.fov - targetFov) > 0.05) { cam.fov += (targetFov - cam.fov) * Math.min(1, dt * 10); cam.updateProjectionMatrix(); }
       this.viewmodel?.setVisible(this.alive);
-      this.viewmodel?.update(dt, now, Math.min(1, (now - this.lastFireAt) / CONFIG.fireCooldown), Math.min(1, Math.hypot(s.vel.x, s.vel.z) / CONFIG.runSpeed));
+      this.viewmodel?.update(dt, now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.min(1, Math.hypot(s.vel.x, s.vel.z) / CONFIG.runSpeed));
       const rt = this.serverNow() - CONFIG.interpDelayMs;
       for (const [id, a] of this.avatars) {
         const p = this.interp.sample(id, rt);
         a.root.visible = !!p && p.alive;
         if (p) { a.root.position.set(p.x, p.y, p.z); a.update(dt, p.speed, p.yaw); }
       }
-      this.hud.update(now, Math.min(1, (now - this.lastFireAt) / CONFIG.fireCooldown), Math.max(0, s.dashReadyAt - s.time), (this.endsAt - this.serverNow()) / 1000);
+      this.hud.update(now, Math.min(1, (now - this.lastFireAt) / this.fireCooldown()), Math.max(0, s.dashReadyAt - s.time), this.endsAt ? (this.endsAt - this.serverNow()) / 1000 : Infinity);
+      this.hudBuffs();
+      const ab = s.ability;
+      this.hud.ability(ab === 'aucune' || ab === 'saut' ? '' : ABILITY_LABEL[ab].name, Math.max(0, s.abilityReadyAt - s.time));
     } else if (this.map) {
       // vue d'ensemble qui tourne lentement derrière la salle d'attente
       const [W, D] = this.map.def.size, R = Math.max(W, D) * 0.7, a = now * 0.06;
@@ -254,6 +326,7 @@ export class Session {
       this.viewmodel?.setVisible(false);
     }
     this.world?.update(now);
+    this.pickups?.update(now);
     this.effects.update(now);
     this.renderer.render();
     this.raf = requestAnimationFrame(x => this.frame(x));

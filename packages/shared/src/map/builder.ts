@@ -24,12 +24,14 @@ export interface Builder {
   spawn(x: number, y: number, z: number): void;
   lamp(x: number, y: number, z: number): void;
   prop(p: Prop): void;
+  /** Emplacement de bonus au sol, posé sur le sol existant. */
+  pickup(x: number, z: number): void;
 }
 
 const WALL_T = 0.5;
 
 export function buildMap(def: MapDef): MapData {
-  const data: MapData = { def, boxes: [], ramps: [], pads: [], spawns: [], lamps: [], props: [] };
+  const data: MapData = { def, boxes: [], ramps: [], pads: [], spawns: [], lamps: [], props: [], pickups: [] };
   const push = (x: number, z: number, w: number, d: number, y0: number, y1: number, mat: Mat, solid: boolean) => {
     if (w <= 0.001 || d <= 0.001 || y1 - y0 <= 0.001) return;
     const b: Box = { x0: x, x1: x + w, z0: z, z1: z + d, y0, y1, mat, solid };
@@ -81,7 +83,8 @@ export function buildMap(def: MapDef): MapData {
     },
     spawn: (x, y, z) => { const s: Vec3 = { x: x + 0.5, y, z: z + 0.5 }; data.spawns.push(s); },
     lamp: (x, y, z) => { const l: Lamp = { x, y, z }; data.lamps.push(l); },
-    prop: p => { data.props.push(p); }
+    prop: p => { data.props.push(p); },
+    pickup(x, z) { const top = surfaceAt(data, x, z, 1e6); data.pickups.push({ x, y: Number.isFinite(top) ? top : 0, z }); }
   };
   def.build(b);
   return data;

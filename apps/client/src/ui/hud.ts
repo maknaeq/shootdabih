@@ -12,6 +12,14 @@ export class Hud {
   private cd = h('div', { class: 'cd' }, h('span', {}));
   private dash = h('em', { style: 'font-style:normal' }, 'Dash prêt');
   private dead = h('div', { class: 'dead' });
+  private announceEl = h('div', { class: 'announce' });
+  private announceAt = -9;
+  private buffsEl = h('div', { class: 'buffs' });
+  private abilityEl = h('div', { class: 'ability-hud' });
+  private shieldEl = h('div', { class: 'shielded' });
+  private goalEl = h('small', {}, `sur ${CONFIG.scoreToWin}`);
+  private lastBuffs = '';
+  private lastAbility = '';
   private hitAt = -9;
   private lastDash = '';
   readonly board: HTMLElement;
@@ -20,15 +28,47 @@ export class Hud {
 
   constructor(settings: HTMLElement) {
     this.root = h('div', { class: 'hud' },
-      this.feed, h('div', { class: 'score' }, this.score, h('small', {}, `sur ${CONFIG.scoreToWin}`)), this.timer,
+      this.shieldEl, this.feed, h('div', { class: 'score' }, this.score, this.goalEl), this.timer, this.announceEl, this.buffsEl, this.abilityEl,
       h('div', { class: 'cross' }), this.hit, this.pop,
       h('div', { class: 'bottom' }, this.cd, h('div', { class: 'lbl' }, h('span', {}, 'Rayon'), this.dash)),
       this.dead);
     this.board = h('div', { class: 'overlay', style: 'display:none' }, h('div', { class: 'board' }, h('h2', {}, 'Scores'), this.boardBody));
     this.prompt = h('div', { class: 'overlay', style: 'display:none' }, h('div', { class: 'board' },
       h('h2', {}, 'Clique pour jouer'),
-      h('p', { class: 'hint', style: 'margin:0' }, 'ZQSD ou WASD pour bouger, souris pour viser, clic pour tirer, Espace pour sauter, Maj ou clic droit pour le dash, Tab pour les scores, Échap pour revenir ici.'),
+      h('p', { class: 'hint', style: 'margin:0' }, 'ZQSD ou WASD pour bouger, souris pour viser, clic pour tirer, Espace pour sauter, Maj ou clic droit pour le dash, E pour la capacité, Tab pour les scores, Échap pour revenir ici.'),
       settings));
+  }
+
+  setGoal(scoreToWin: number) { this.goalEl.textContent = scoreToWin ? `sur ${scoreToWin}` : 'éliminations'; }
+
+  announce(text: string, sub: string, now: number) {
+    this.announceEl.replaceChildren(document.createTextNode(text), h('small', {}, sub));
+    this.announceAt = now;
+  }
+
+  note(text: string) {
+    const li = h('li', {}, h('span', { class: 'me' }, text));
+    this.feed.prepend(li);
+    while (this.feed.children.length > 5) this.feed.lastElementChild?.remove();
+    setTimeout(() => li.remove(), 6000);
+  }
+
+  /** Bonus actifs : [libellé, secondes restantes, couleur]. */
+  buffs(list: Array<[string, number, string]>, shielded: boolean) {
+    const key = list.map(b => b[0] + Math.ceil(b[1])).join('|') + shielded;
+    if (key !== this.lastBuffs) {
+      this.lastBuffs = key;
+      this.buffsEl.replaceChildren(...list.map(([l, s, c]) => h('span', { style: `--c:${c}` }, s > 0 && s < 1e5 ? `${l} ${Math.ceil(s)} s` : l)));
+    }
+    this.shieldEl.style.opacity = shielded ? '1' : '0';
+  }
+
+  ability(name: string, cooldown: number) {
+    const t = name ? (cooldown > 0.05 ? `${name} ${cooldown.toFixed(1).replace('.', ',')} s` : `${name} prêt`) : '';
+    if (t === this.lastAbility) return;
+    this.lastAbility = t;
+    this.abilityEl.className = 'ability-hud' + (cooldown > 0.05 ? ' cooling' : '');
+    this.abilityEl.replaceChildren(...(name ? [h('kbd', {}, 'E'), document.createTextNode(t)] : []));
   }
 
   kill(killer: string, victim: string, mine: boolean, now: number) {
@@ -64,7 +104,10 @@ export class Hud {
     const p = (now - this.hitAt) / 0.9;
     if (p >= 0 && p < 1) { this.pop.style.opacity = (p < 0.7 ? 1 : (1 - p) / 0.3).toFixed(2); this.pop.style.transform = `translate(-50%, ${(-p * 14).toFixed(1)}px)`; }
     else this.pop.style.opacity = '0';
-    const s = Math.max(0, Math.ceil(secondsLeft));
-    this.timer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    if (!Number.isFinite(secondsLeft)) this.timer.textContent = 'Sans limite';
+    else { const s = Math.max(0, Math.ceil(secondsLeft)); this.timer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; }
+    const a = (now - this.announceAt) / 1.8;
+    if (a >= 0 && a < 1) { this.announceEl.style.opacity = (a < 0.75 ? 1 : (1 - a) / 0.25).toFixed(2); this.announceEl.style.transform = `translateX(-50%) scale(${(1 + Math.max(0, 0.15 - a) ).toFixed(3)})`; }
+    else this.announceEl.style.opacity = '0';
   }
 }

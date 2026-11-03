@@ -38,4 +38,6 @@ export interface MapData {
   spawns: Vec3[];
   lamps: Lamp[];
   props: Prop[];
+  /** Emplacements des bonus au sol. */
+  pickups: Vec3[];
 }

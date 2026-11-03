@@ -95,3 +95,35 @@ button { font: inherit; }
 .setting input[type=range] { width: 160px; accent-color: var(--orange); }
 .setting input[type=checkbox] { accent-color: var(--orange); width: 18px; height: 18px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* salle d'attente élargie : salon à gauche, perso et réglages à droite */
+.card.wide { width: min(980px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 28px; max-height: calc(100vh - 48px); overflow: auto; }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.section { display: flex; flex-direction: column; gap: 8px; }
+.section + .section { border-top: 1px solid var(--line); padding-top: 14px; }
+.section h3 { margin: 0; font-family: var(--display); font-size: 20px; letter-spacing: .05em; text-transform: uppercase; }
+.chip-btn { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: rgba(255,255,255,.03); color: var(--ink); cursor: pointer; }
+.chip-btn.on { border-color: var(--orange); background: rgba(232,132,62,.16); }
+.chip-btn:disabled { cursor: default; opacity: .55; }
+.chip-btn.on:disabled { opacity: 1; }
+.chip-btn:focus-visible, .swatch:focus-visible, .ability:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+.swatch { width: 30px; height: 30px; border-radius: 7px; border: 2px solid transparent; cursor: pointer; }
+.swatch.on { border-color: var(--ink); box-shadow: 0 0 0 2px var(--orange); }
+.swatch:disabled { opacity: .25; cursor: not-allowed; }
+.abilities { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.ability { font: inherit; text-align: left; display: flex; flex-direction: column; gap: 2px; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.03); color: var(--ink); cursor: pointer; }
+.ability b { font-family: var(--display); font-size: 17px; letter-spacing: .04em; text-transform: uppercase; }
+.ability span { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
+.ability.on { border-color: var(--orange); background: rgba(232,132,62,.14); }
+.ability:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 820px) { .card.wide { grid-template-columns: 1fr; } }
+
+/* annonces, bonus et capacité en jeu */
+.hud .announce { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); text-align: center; font-size: 44px; color: var(--orange); opacity: 0; text-shadow: 0 3px 16px rgba(0,0,0,.5); white-space: nowrap; }
+.hud .announce small { display: block; font-size: 18px; color: var(--ink); }
+.hud .buffs { position: absolute; left: 18px; bottom: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; }
+.hud .buffs span { padding: 3px 10px; background: rgba(14,22,20,.6); border-left: 3px solid var(--c, var(--ink)); }
+.hud .ability-hud { position: absolute; right: 18px; bottom: 20px; text-align: right; font-size: 16px; }
+.hud .ability-hud kbd { font-family: var(--display); border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; margin-right: 6px; }
+.hud .ability-hud.cooling { color: var(--muted); }
+.hud .shielded { position: absolute; inset: 0; box-shadow: inset 0 0 90px rgba(243,239,230,.35); opacity: 0; transition: opacity .2s; }

@@ -23,6 +23,7 @@ export class Renderer {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   private sun = new THREE.DirectionalLight();
+  private hemi: THREE.HemisphereLight | null = null;
   private settings: GraphicsSettings;
 
   constructor(readonly canvas: HTMLCanvasElement, settings: GraphicsSettings) {
@@ -39,7 +40,9 @@ export class Renderer {
     const m = map.def.mood;
     this.scene.background = skyTexture(m.sky[0], m.sky[1]);
     this.scene.fog = new THREE.Fog(m.fog, m.fogNear, m.fogFar);
-    this.scene.add(new THREE.HemisphereLight(m.hemiSky, m.hemiGround, m.hemiIntensity * Math.PI));
+    if (this.hemi) this.scene.remove(this.hemi);
+    this.hemi = new THREE.HemisphereLight(m.hemiSky, m.hemiGround, m.hemiIntensity * Math.PI);
+    this.scene.add(this.hemi);
     const [W, D] = map.def.size;
     this.sun.color.set(m.sun); this.sun.intensity = m.sunIntensity * Math.PI;
     const dir = new THREE.Vector3(...m.sunDir).normalize();

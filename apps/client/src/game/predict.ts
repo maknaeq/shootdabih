@@ -1,4 +1,4 @@
-import { makePlayerState, stepPlayer, type Input, type MapData, type NetPlayer, type PlayerState, type Vec3 } from '@sdb/shared';
+import { makePlayerState, stepPlayer, type Ability, type Input, type MapData, type NetPlayer, type PlayerState, type Vec3 } from '@sdb/shared';
 
 /** Prédiction du joueur local : on applique ses entrées tout de suite, puis on se recale sur le serveur. */
 export class Predictor {
@@ -8,6 +8,8 @@ export class Predictor {
   private offset: Vec3 = { x: 0, y: 0, z: 0 };
 
   constructor(private map: MapData) { this.state = makePlayerState({ x: 0, y: 0, z: 0 }); }
+
+  setMap(map: MapData) { this.map = map; this.pending = []; }
 
   apply(input: Input) {
     this.state = stepPlayer(this.state, input, this.map);
@@ -20,7 +22,9 @@ export class Predictor {
     let s: PlayerState = {
       pos: { x: server.x, y: server.y, z: server.z }, vel: { x: server.vx, y: server.vy, z: server.vz },
       yaw: this.state.yaw, pitch: this.state.pitch, onGround: server.onGround, time: server.time,
-      dashUntil: server.dashUntil, dashReadyAt: server.dashReadyAt, padUntil: server.padUntil
+      dashUntil: server.dashUntil, dashReadyAt: server.dashReadyAt, padUntil: server.padUntil,
+      jumpHeld: server.jumpHeld, airJumps: server.airJumps, airJumpsMax: server.airJumpsMax,
+      ability: this.state.ability, abilityReadyAt: server.abilityReadyAt, abilityUsedAt: server.abilityUsedAt
     };
     this.pending = this.pending.filter(i => i.seq > ack);
     for (const i of this.pending) s = stepPlayer(s, i, this.map);
@@ -31,9 +35,9 @@ export class Predictor {
     this.state = s;
   }
 
-  teleport(pos: Vec3, yaw: number) {
+  teleport(pos: Vec3, yaw: number, ability: Ability) {
     const time = this.state.time;
-    this.state = makePlayerState(pos, yaw); this.state.time = time; this.state.dashReadyAt = time;
+    this.state = makePlayerState(pos, yaw, ability); this.state.time = time; this.state.dashReadyAt = time; this.state.abilityReadyAt = time;
     this.pending = []; this.offset = { x: 0, y: 0, z: 0 };
   }
 

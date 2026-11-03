@@ -18,7 +18,7 @@ const test = buildMap(def(b => {
   b.pad(15, 5, 0, 15, 0);
 }));
 
-const input = (over: Partial<Input> = {}): Input => ({ seq: 0, dt: 1 / 60, fwd: false, back: false, left: false, right: false, jump: false, dash: false, yaw: 0, pitch: 0, ...over });
+const input = (over: Partial<Input> = {}): Input => ({ seq: 0, dt: 1 / 60, fwd: false, back: false, left: false, right: false, jump: false, dash: false, ability: false, yaw: 0, pitch: 0, ...over });
 const run = (s: PlayerState, seconds: number, over: Partial<Input> = {}, map = test) => {
   for (let i = 0; i < Math.round(seconds * 60); i++) s = stepPlayer(s, input({ seq: i, ...over }), map);
   return s;

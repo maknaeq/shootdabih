@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Hat } from '@sdb/shared';
 import { flatMat } from './palette';
 
 const FUR = 0xcfc6b6, FACE = 0x7a5040, PANTS = 0x2f4256, BOOT = 0x262a2b, GUN = 0x4a4f52;
@@ -21,9 +22,13 @@ export class Avatar {
   private body = new THREE.Group();
   private legL: THREE.Mesh; private legR: THREE.Mesh;
   private phase = 0;
+  private hatGroup = new THREE.Group();
+  private bubble: THREE.Mesh;
+  private parkaMat: THREE.MeshPhongMaterial;
 
-  constructor(color: number, name: string) {
-    const parka = flatMat(color, false), fur = flatMat(FUR, false), face = flatMat(FACE, false);
+  constructor(color: number, name: string, hat: Hat = 'bonnet') {
+    const parka = new THREE.MeshPhongMaterial({ color, flatShading: true, shininess: 0, specular: 0, fog: false }); this.parkaMat = parka;
+    const fur = flatMat(FUR, false), face = flatMat(FACE, false);
     const pants = flatMat(PANTS, false), boot = flatMat(BOOT, false), gun = flatMat(GUN, false);
     const m = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, parent: THREE.Object3D = this.body) => {
       const o = new THREE.Mesh(geo, mat); o.position.set(x, y, z); o.castShadow = true; parent.add(o); return o;
@@ -43,8 +48,24 @@ export class Avatar {
     m(new THREE.BoxGeometry(0.22, 0.22, 0.6), parka, 0, 0, 0.24, arm);
     m(new THREE.BoxGeometry(0.14, 0.18, 0.72), gun, 0, -0.03, 0.62, arm);
     m(new THREE.BoxGeometry(0.16, 0.06, 0.08), flatMat(0xe8843e, false), 0, 0.06, 0.92, arm);
+    this.body.add(this.hatGroup);
+    this.setHat(hat);
     this.root.add(this.body);
     this.root.add(nameSprite(name));
+    this.bubble = new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, 1), new THREE.MeshBasicMaterial({ color: 0xf3efe6, transparent: true, opacity: 0.22, depthWrite: false, fog: false }));
+    this.bubble.position.y = 1.05; this.bubble.visible = false; this.root.add(this.bubble);
+  }
+
+  setColor(c: number) { this.parkaMat.color.set(c); }
+  setShield(on: boolean) { this.bubble.visible = on; }
+
+  setHat(hat: Hat) {
+    this.hatGroup.clear();
+    const m = (geo: THREE.BufferGeometry, color: number, x: number, y: number, z: number) => { const o = new THREE.Mesh(geo, flatMat(color, false)); o.position.set(x, y, z); o.castShadow = true; this.hatGroup.add(o); return o; };
+    if (hat === 'bonnet') { m(new THREE.CylinderGeometry(0.3, 0.36, 0.26, 8), 0xd9534f, 0, 1.9, -0.02); m(new THREE.IcosahedronGeometry(0.1, 0), 0xf3efe6, 0, 2.08, -0.02); }
+    if (hat === 'casquette') { m(new THREE.CylinderGeometry(0.33, 0.37, 0.16, 8), 0x2f4256, 0, 1.93, -0.02); m(new THREE.BoxGeometry(0.4, 0.05, 0.3), 0x2f4256, 0, 1.88, 0.3); }
+    if (hat === 'chapka') { m(new THREE.CylinderGeometry(0.38, 0.4, 0.3, 8), 0x7a5a42, 0, 1.92, -0.02); m(new THREE.BoxGeometry(0.12, 0.3, 0.26), 0xcfc6b6, -0.38, 1.7, 0); m(new THREE.BoxGeometry(0.12, 0.3, 0.26), 0xcfc6b6, 0.38, 1.7, 0); }
+    if (hat === 'casque') { const g = new THREE.SphereGeometry(0.4, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2); m(g, 0xe8c23a, 0, 1.76, -0.02); m(new THREE.BoxGeometry(0.12, 0.08, 0.1), 0xf3efe6, 0, 2.02, 0.3); }
   }
 
   /** speed : vitesse horizontale, pour animer la marche. */

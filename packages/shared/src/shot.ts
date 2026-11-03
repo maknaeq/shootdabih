@@ -36,6 +36,16 @@ export function rayCapsule(origin: Vec3, dir: Vec3, base: Vec3, radius: number, 
 export interface ShotTarget { id: string; pos: Vec3 }
 export interface ShotResult { hitId: string | null; end: Vec3; distance: number }
 
+/** Rayon perçant : tous les joueurs touchés avant le premier mur, du plus proche au plus loin. */
+export function traceShotAll(map: Pick<MapData, 'boxes'>, origin: Vec3, dir: Vec3, targets: ShotTarget[]): { hits: string[]; end: Vec3 } {
+  const far = add(origin, scale(dir, SHOT_RANGE));
+  const wallT = segmentBlocked({ boxes: map.boxes, ramps: [] }, origin, far);
+  const maxD = wallT === null ? SHOT_RANGE : wallT * SHOT_RANGE;
+  const hits = targets.map(t => ({ id: t.id, d: rayCapsule(origin, dir, t.pos, CONFIG.hitRadius, CONFIG.hitHeight) }))
+    .filter((h): h is { id: string; d: number } => h.d !== null && h.d < maxD).sort((a, b) => a.d - b.d).map(h => h.id);
+  return { hits, end: add(origin, scale(dir, maxD)) };
+}
+
 /** Trace le rayon : renvoie le joueur le plus proche touché avant le premier mur. */
 export function traceShot(map: Pick<MapData, 'boxes'>, origin: Vec3, dir: Vec3, targets: ShotTarget[]): ShotResult {
   const far = add(origin, scale(dir, SHOT_RANGE));
