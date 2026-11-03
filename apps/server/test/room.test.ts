@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { CONFIG, DEFAULT_SETTINGS, anglesTo, makePlayerState, type ServerMsg } from '@sdb/shared';
+import { CONFIG, DEFAULT_SETTINGS, anglesTo, getMap, makePlayerState, type ServerMsg } from '@sdb/shared';
 import { Room } from '../src/room';
 import { startServer } from '../src/http';
 
@@ -187,6 +187,31 @@ describe('capture du drapeau', () => {
     const { yaw, pitch } = aimAtB();
     room.handle(a, { t: 'fire', seq: 1, yaw, pitch, renderTime: now() });
     expect(inbox.a.some(m => m.t === 'kill')).toBe(false);
+  });
+});
+
+describe('course de motos', () => {
+  it('compte à rebours, checkpoints, tours, arrivée', () => {
+    const { room, inbox, a, advance } = setup();
+    room.handle(a, { t: 'settings', settings: { ...DEFAULT_SETTINGS, mode: 'course', mapId: 'circuit', laps: 1 } });
+    room.handle(a, { t: 'start' });
+    const pa = room.players.get(a)!;
+    expect(pa.state.vehicle).toBe('bike');
+    const start = { ...pa.state.pos };
+    // pendant le compte à rebours, les entrées ne font pas bouger
+    room.handle(a, { t: 'input', inputs: Array.from({ length: 30 }, (_, i) => ({ seq: i + 1, dt: 1 / 60, fwd: true, back: false, left: false, right: false, jump: false, dash: false, ability: false, yaw: 0, pitch: 0 })) });
+    advance(600);
+    expect(Math.hypot(pa.state.pos.x - start.x, pa.state.pos.z - start.z)).toBeLessThan(0.01);
+    advance(3200);
+    const cps = getMap('circuit').def.race!.checkpoints;
+    for (const k of [1, 2, 3, 4, 5, 0]) {
+      const c = cps[k];
+      pa.state = { ...pa.state, pos: { x: (c.x0 + c.x1) / 2, y: k === 2 || k === 3 ? 6 : 0, z: (c.z0 + c.z1) / 2 } };
+      advance(50);
+    }
+    expect(pa.finishedAt).toBeGreaterThan(0);
+    const race = [...inbox.a].reverse().find(m => m.t === 'race');
+    expect(race && race.t === 'race' && race.list.find(l => l.id === a)?.done).toBe(true);
   });
 });
 

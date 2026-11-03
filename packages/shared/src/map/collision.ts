@@ -30,8 +30,7 @@ export function groundAt(map: Collidable, x: number, z: number, y: number): numb
 }
 
 /** Vrai si un bloc plein chevauche le corps du joueur (au-dessus de la marche franchissable). */
-export function hitsWall(map: Collidable, x: number, z: number, y: number): boolean {
-  const r = CONFIG.playerRadius;
+export function hitsWall(map: Collidable, x: number, z: number, y: number, r: number = CONFIG.playerRadius): boolean {
   for (const b of map.boxes) {
     if (b.solid && x + r > b.x0 && x - r < b.x1 && z + r > b.z0 && z - r < b.z1 && b.y1 > y + CONFIG.stepHeight && b.y0 < y + CONFIG.playerHeight) return true;
   }

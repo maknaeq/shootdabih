@@ -4,6 +4,7 @@ import { mapSupports } from './maps/modes';
 import { MAP_DEFS } from './maps/index';
 
 export interface LobbyPlayer { id: string; name: string; color: number; hat: Hat; team: number }
+export interface RaceLine { id: string; lap: number; done: boolean; time: number | null; rank: number; nextCp: number }
 export interface FlagState { team: number; x: number; y: number; z: number; carrier: string | null; atHome: boolean }
 export interface ScoreLine { id: string; name: string; color: number; kills: number; deaths: number; team: number; captures: number }
 export interface NetPlayer {
@@ -14,6 +15,7 @@ export interface NetPlayer {
   overchargeUntil: number; pierceUntil: number; shield: boolean; streak: number;
   /** Capacité ramassée et fin de sa durée (temps serveur, ms). */
   ability: Ability; abilityUntil: number;
+  vehicle?: 'foot' | 'bike'; speed?: number;
 }
 export interface PickupState { i: number; kind: PickupKind; active: boolean }
 /** Autre joueur dans un snapshot, en format compact : [id, x, y, z, yaw, pitch, drapeaux, vx, vz]. drapeaux : 1 vivant, 2 protégé, 4 porte le drapeau. */
@@ -52,6 +54,7 @@ export type ServerMsg =
   | { t: 'scores'; list: ScoreLine[] }
   | { t: 'matchEnd'; winner: string | null; list: ScoreLine[]; winnerTeam?: number; teamScores?: [number, number] }
   | { t: 'flags'; flags: FlagState[]; score: [number, number] }
+  | { t: 'race'; startAt: number; laps: number; list: RaceLine[] }
   | { t: 'flagEvent'; kind: 'take' | 'drop' | 'return' | 'capture'; team: number; by: string | null }
   | { t: 'pong'; c: number; serverTime: number }
   | { t: 'streak'; id: string; n: number }

@@ -220,6 +220,33 @@ for y in (-0.66, -0.76, -0.86):
     torus('VMCoil', 0.052, 0.015, (0.0, y, 0.05), 'Accent', vm, rot=(R90, 0, 0), seg=(10, 4))
 ico('VMTip', 0.028, (0.0, -0.96, 0.05), 'Glow', vm, subdiv=1)
 
+# ---------- moto (mode course) ----------
+# Repères : la moto regarde vers -y, le bas des roues est à z = 0. Roues séparées (WheelF, WheelR) pour tourner.
+for name, rgb in (('BikeBody', (0xe8, 0x84, 0x3e)), ('BikeDark', (0x26, 0x2a, 0x2b)), ('BikeMetal', (0x8a, 0x8c, 0x86)), ('Tyre', (0x1f, 0x1d, 0x1c)), ('Seat', (0x3a, 0x2f, 0x2a))):
+    m = bpy.data.materials.new(name); m.use_nodes = True
+    bs = m.node_tree.nodes['Principled BSDF']; c = tuple(srgb(v) for v in rgb)
+    bs.inputs['Base Color'].default_value = (*c, 1); bs.inputs['Roughness'].default_value = 1.0
+    m.diffuse_color = (*c, 1); MATS[name] = m
+
+bike = empty('Bike', (0, 0, 0))
+for wname, y in (('WheelF', -0.72), ('WheelR', 0.68)):
+    w = empty(wname, (0, y, 0.36), bike)
+    torus('Tyre', 0.28, 0.085, (0, y, 0.36), 'Tyre', w, rot=(0, R90, 0), seg=(16, 6))
+    cone('Rim', 0.2, 0.2, 0.1, 8, (0, y, 0.36), 'BikeMetal', w, rot=(0, R90, 0))
+    box('Hub', (0.14, 0.08, 0.08), (0, y, 0.36), 'BikeDark', w, bevel=0.01)
+box('Frame', (0.14, 1.1, 0.12), (0, 0.0, 0.52), 'BikeDark', bike, bevel=0.03, rot=(math.radians(-6), 0, 0))
+box('Engine', (0.3, 0.42, 0.3), (0, 0.05, 0.42), 'BikeMetal', bike, bevel=0.05)
+box('Tank', (0.34, 0.5, 0.24), (0, -0.2, 0.78), 'BikeBody', bike, bevel=0.08)
+box('Seat', (0.28, 0.56, 0.1), (0, 0.32, 0.8), 'Seat', bike, bevel=0.04)
+box('Tail', (0.26, 0.34, 0.14), (0, 0.66, 0.78), 'BikeBody', bike, bevel=0.05, rot=(math.radians(12), 0, 0))
+box('Fairing', (0.42, 0.24, 0.36), (0, -0.62, 0.86), 'BikeBody', bike, bevel=0.07, rot=(math.radians(-18), 0, 0))
+ico('Headlight', 0.08, (0, -0.76, 0.86), 'Glow', bike, subdiv=1, scale=(1, 0.5, 1))
+box('Screen', (0.3, 0.04, 0.16), (0, -0.66, 1.07), 'GunDark', bike, bevel=0.02, rot=(math.radians(-25), 0, 0))
+box('Fork', (0.06, 0.06, 0.62), (0, -0.66, 0.58), 'BikeMetal', bike, bevel=0.0, rot=(math.radians(-22), 0, 0))
+box('Bars', (0.7, 0.05, 0.05), (0, -0.52, 1.04), 'BikeDark', bike, bevel=0.0)
+cone('Exhaust', 0.05, 0.06, 0.6, 8, (0.2, 0.42, 0.42), 'BikeMetal', bike, rot=(R90, 0, 0))
+box('FenderR', (0.2, 0.36, 0.05), (0, 0.66, 0.68), 'BikeDark', bike, bevel=0.01)
+
 # ---------- export ----------
 bpy.ops.export_scene.gltf(filepath=OUT, export_format='GLB', export_apply=True, export_yup=True,
                           export_materials='EXPORT', export_normals=True, export_cameras=False, export_lights=False)
@@ -228,6 +255,8 @@ print('Exporté :', OUT)
 # ---------- aperçu ----------
 if PREVIEW:
     vm.location = (3, 0, 0)
+    bike.location = (-1.2, -1.2, 0)
+    bike.rotation_euler = (0, 0, math.radians(-60))
     for o in bpy.data.objects:
         if o.name.startswith('Hat_') and o.name != 'Hat_bonnet':
             o.location.x += {'Hat_casquette': -1.6, 'Hat_chapka': 1.6, 'Hat_casque': 3.2}[o.name]

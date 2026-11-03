@@ -20,6 +20,11 @@ interface Player {
   face: string;
   team: number;
   captures: number;
+  lap: number;
+  nextCp: number;
+  lastCp: number;
+  finishedAt: number;
+  offTrack: number;
   send(m: ServerMsg): void;
   state: PlayerState;
   alive: boolean;
@@ -62,6 +67,10 @@ export class Room {
   private pickups: PickupSpot[] = [];
   private flags: Flag[] = [];
   private teamScore: [number, number] = [0, 0];
+  private raceStartAt = 0;
+  private firstFinishAt = 0;
+  private lastRaceMsg = 0;
+  private get course() { return this.state === 'playing' && this.settings.mode === 'course'; }
 
   private get ctf() { return this.state === 'playing' && this.settings.mode === 'ctf'; }
   /** Vrai si a et b peuvent se tirer dessus : toujours en chacun pour soi, seulement entre équipes au drapeau. */
@@ -83,7 +92,7 @@ export class Room {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = PARKA_COLORS.find(c => !used.has(c)) ?? PARKA_COLORS[0];
     const p: Player = {
-      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', team: 0, captures: 0, send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
+      id, name: cleanName(rawName), color, hat: 'bonnet', ability: 'aucune', abilityUntil: 0, face: '', team: 0, captures: 0, lap: 0, nextCp: 1, lastCp: 0, finishedAt: 0, offTrack: 0, send, state: makePlayerState({ x: 0, y: 0, z: 0 }), alive: false, respawnAt: 0,
       kills: 0, deaths: 0, streak: 0, bestStreak: 0, lastFireAt: -1e9, queue: [], ack: -1, history: [],
       overchargeUntil: 0, pierceUntil: 0, shieldBuffUntil: 0, shieldAbilityUntil: 0, lastAbilityUse: -1
     };
@@ -189,12 +198,28 @@ export class Room {
     this.broadcast({ t: 'start', mapId: this.mapId, endsAt: this.endsAt, settings: this.settings });
     this.broadcast({ t: 'pickups', list: this.pickupList() });
     if (this.flags.length) this.broadcastFlags();
-    for (const q of this.players.values()) this.respawn(q, now);
+    if (this.settings.mode === 'course' && this.map.def.race) {
+      this.raceStartAt = now + CONFIG.raceCountdownMs; this.firstFinishAt = 0;
+      const st = this.map.def.race.start, [back, side] = this.map.def.race.gridStep;
+      const fx = -Math.sin(st.yaw), fz = -Math.cos(st.yaw), lx = Math.cos(st.yaw), lz = -Math.sin(st.yaw);
+      [...this.players.values()].sort(() => this.rand() - 0.5).forEach((q, i) => {
+        const row = Math.floor(i / 3), col = (i % 3) - 1;
+        const pos = { x: st.x - fx * row * back + lx * col * side, y: 0, z: st.z - fz * row * back + lz * col * side };
+        const top = surfaceAt(this.map, pos.x, pos.z, 50); pos.y = Number.isFinite(top) ? top : 0;
+        q.lap = 0; q.nextCp = 1; q.lastCp = 0; q.finishedAt = 0; q.offTrack = 0;
+        const time = q.state.time;
+        q.state = makePlayerState(pos, st.yaw, 'aucune'); q.state.vehicle = 'bike'; q.state.time = time; q.state.dashReadyAt = time;
+        q.alive = true; q.history = [{ t: now, pos: { ...pos } }];
+        this.broadcast({ t: 'respawn', id: q.id, x: pos.x, y: pos.y, z: pos.z, yaw: st.yaw });
+      });
+      this.broadcastRace(now);
+    } else for (const q of this.players.values()) this.respawn(q, now);
     this.broadcast({ t: 'scores', list: this.scores() });
   }
 
   /** Objets qui peuvent apparaître selon les réglages de l'hôte. */
   private allowedKinds(): PickupKind[] {
+    if (this.settings.mode === 'course') return [];
     return PICKUP_KINDS.filter(k => (BONUS_KINDS as readonly string[]).includes(k) ? this.settings.pickups : this.settings.abilities);
   }
 
@@ -217,6 +242,11 @@ export class Room {
           continue;
         }
         this.applyLoadout(p);
+        if (this.course && (now < this.raceStartAt || p.finishedAt)) {
+          if (p.queue.length) { p.ack = p.queue[p.queue.length - 1].seq; p.queue = []; }
+          if (p.finishedAt) { p.state.speed *= 0.95; }
+          continue;
+        }
         // une entrée par pas en régime normal, un peu plus pour rattraper un retard : le mouvement reste régulier
         const n = Math.min(p.queue.length, p.queue.length > 8 ? 4 : p.queue.length > 3 ? 2 : 1);
         for (const i of p.queue.splice(0, n)) { p.state = stepPlayer(p.state, i, this.map); p.ack = i.seq; }
@@ -237,6 +267,7 @@ export class Room {
         }
       });
       if (this.ctf) this.ctfTick(now);
+      if (this.course) this.raceTick(now);
       if (this.endsAt && now >= this.endsAt) this.endMatch();
       if (now - this.lastSnapshot >= 1000 / CONFIG.snapshotRate - 1) { this.lastSnapshot = now; this.sendSnapshots(now); }
     } else if (this.state === 'ended' && now - this.endedAt >= END_SCREEN_MS) {
@@ -262,6 +293,52 @@ export class Room {
       this.broadcast({ t: 'pickup', i, by: p.id, kind: s.kind });
       this.broadcast({ t: 'pickups', list: this.pickupList() });
     });
+  }
+
+  /** Course : checkpoints dans l'ordre, tours, sortie de piste, fin de course. */
+  private raceTick(now: number) {
+    const race = this.map.def.race!;
+    const n = race.checkpoints.length;
+    let changed = false;
+    for (const p of this.players.values()) {
+      if (!p.alive || p.finishedAt || now < this.raceStartAt) continue;
+      const cp = race.checkpoints[p.nextCp];
+      const { x, z, y } = p.state.pos;
+      if (x >= cp.x0 && x <= cp.x1 && z >= cp.z0 && z <= cp.z1 && y > -1) {
+        changed = true;
+        if (p.nextCp === 0) {
+          p.lap++; p.lastCp = 0;
+          if (p.lap >= this.settings.laps) { p.finishedAt = now; if (!this.firstFinishAt) this.firstFinishAt = now; this.broadcast({ t: 'flagEvent', kind: 'capture', team: -1, by: p.id }); }
+          p.nextCp = 1 % n;
+        } else { p.lastCp = p.nextCp; p.nextCp = (p.nextCp + 1) % n; }
+      }
+      // hors piste (dans le champ ou tombé) : retour au dernier checkpoint
+      if (y < -0.3) { p.offTrack += 1 / CONFIG.tickRate; if (p.offTrack > 1.5) { p.offTrack = 0; this.respawn(p, now); } }
+      else p.offTrack = 0;
+    }
+    const racers = [...this.players.values()];
+    const allDone = racers.length > 0 && racers.every(p => p.finishedAt);
+    if (allDone || (this.firstFinishAt && now - this.firstFinishAt > CONFIG.raceFinishGraceMs)) { this.broadcastRace(now); this.endMatch(); return; }
+    if (changed || now - this.lastRaceMsg > 500) this.broadcastRace(now);
+  }
+
+  private raceOrder(): Player[] {
+    const race = this.map.def.race;
+    if (!race) return [...this.players.values()];
+    const n = race.checkpoints.length;
+    const progress = (p: Player) => p.lap * n + (p.nextCp === 0 ? n : p.nextCp) - 1;
+    const distNext = (p: Player) => { const c = race.checkpoints[p.nextCp]; return Math.hypot(p.state.pos.x - (c.x0 + c.x1) / 2, p.state.pos.z - (c.z0 + c.z1) / 2); };
+    return [...this.players.values()].sort((a, b) => {
+      if (a.finishedAt && b.finishedAt) return a.finishedAt - b.finishedAt;
+      if (a.finishedAt) return -1; if (b.finishedAt) return 1;
+      return progress(b) - progress(a) || distNext(a) - distNext(b);
+    });
+  }
+
+  private broadcastRace(now: number) {
+    this.lastRaceMsg = now;
+    const list = this.raceOrder().map((p, i) => ({ id: p.id, lap: p.lap, done: !!p.finishedAt, time: p.finishedAt ? p.finishedAt - this.raceStartAt : null, rank: i + 1, nextCp: p.nextCp }));
+    this.broadcast({ t: 'race', startAt: this.raceStartAt, laps: this.settings.laps, list });
   }
 
   private flagList(): FlagState[] { return this.flags.map(f => ({ team: f.team, x: f.pos.x, y: f.pos.y, z: f.pos.z, carrier: f.carrier, atHome: f.atHome })); }
@@ -320,6 +397,17 @@ export class Room {
   private pickupList(): PickupState[] { return this.pickups.map((s, i) => ({ i, kind: s.kind, active: s.active })); }
 
   private respawn(p: Player, now: number) {
+    if (this.settings.mode === 'course' && this.map.def.race) {
+      const race = this.map.def.race, c = race.checkpoints[p.lastCp], nxt = race.checkpoints[(p.lastCp + 1) % race.checkpoints.length];
+      const pos = { x: (c.x0 + c.x1) / 2, y: 0, z: (c.z0 + c.z1) / 2 };
+      const top = surfaceAt(this.map, pos.x, pos.z, 50); pos.y = Number.isFinite(top) ? top : 0;
+      const yaw = Math.atan2(-((nxt.x0 + nxt.x1) / 2 - pos.x), -((nxt.z0 + nxt.z1) / 2 - pos.z));
+      const time = p.state.time;
+      p.state = makePlayerState(pos, yaw, 'aucune'); p.state.vehicle = 'bike'; p.state.time = time; p.state.dashReadyAt = time;
+      p.alive = true; p.history = [{ t: now, pos: { ...pos } }];
+      this.broadcast({ t: 'respawn', id: p.id, x: pos.x, y: pos.y, z: pos.z, yaw });
+      return;
+    }
     const enemies = [...this.players.values()].filter(q => this.enemies(p, q) && q.alive).map(q => q.state.pos);
     const bases = this.ctf && this.map.def.ctf ? this.map.def.ctf.bases : null;
     const allowed = bases ? (i: number) => { const s = this.map.spawns[i], own = bases[p.team], other = bases[1 - p.team]; return Math.hypot(s.x - own.x, s.z - own.z) < Math.hypot(s.x - other.x, s.z - other.z); } : undefined;
@@ -358,6 +446,7 @@ export class Room {
 
   private fire(p: Player, yaw: number, pitch: number, renderTime: number) {
     if (this.state !== 'playing' || !p.alive) return;
+    if (this.course && (!this.settings.raceWeapons || this.clock.now() < this.raceStartAt || p.finishedAt)) return;
     const now = this.clock.now();
     if (now - p.lastFireAt < this.fireCooldownMs(p, now) - 60) return;
     p.lastFireAt = now;
@@ -399,7 +488,12 @@ export class Room {
     this.state = 'ended';
     this.endedAt = this.clock.now();
     const list = this.scores();
-    if (this.settings.mode === 'ctf') {
+    if (this.settings.mode === 'course') {
+      const order = this.raceOrder();
+      const byId = new Map(list.map(l => [l.id, l]));
+      const ranked = order.map(p => byId.get(p.id)!).filter(Boolean);
+      this.broadcast({ t: 'matchEnd', winner: order[0]?.finishedAt ? order[0].id : null, list: ranked });
+    } else if (this.settings.mode === 'ctf') {
       const [a, b2] = this.teamScore, winnerTeam = a === b2 ? -1 : a > b2 ? 0 : 1;
       this.broadcast({ t: 'matchEnd', winner: null, list, winnerTeam, teamScores: [...this.teamScore] as [number, number] });
     } else {
@@ -428,7 +522,7 @@ export class Room {
       abilityReadyAt: p.state.abilityReadyAt, abilityUsedAt: p.state.abilityUsedAt,
       overchargeUntil: p.overchargeUntil, pierceUntil: p.pierceUntil,
       shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak,
-      ability: p.state.ability, abilityUntil: p.abilityUntil
+      ability: p.state.ability, abilityUntil: p.abilityUntil, vehicle: p.state.vehicle, speed: p.state.speed
     }));
     const carriers = new Set(this.flags.map(f => f.carrier).filter(Boolean));
     const packed = players.map(n => packPlayer(n, carriers.has(n.id)));

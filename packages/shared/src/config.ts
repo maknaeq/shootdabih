@@ -34,7 +34,10 @@ export const CONFIG = {
   shieldAbilitySeconds: 2.5, shieldAbilityCooldown: 10,
   pickupRespawn: 20, pickupRadius: 1.3,
   overchargeSeconds: 10, overchargeFactor: 0.5,
-  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30
+  pierceSeconds: 10, shieldBuffSeconds: 30, abilityPickupSeconds: 30,
+  bikeMaxSpeed: 27, bikeReverse: 6, bikeAccel: 13, bikeBrake: 24, bikeCoast: 3.5, bikeTurn: 2.5,
+  bikeBoost: 11, bikeBoostCooldown: 4, bikeHop: 6, bikeRadius: 0.6, bikeBounce: 0.3,
+  raceCountdownMs: 3500, raceFinishGraceMs: 30000
 } as const;
 
 export const HATS = ['aucun', 'bonnet', 'casquette', 'chapka', 'casque'] as const;

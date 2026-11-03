@@ -77,6 +77,23 @@ export class Avatar {
 
   setColor(c: number) { this.parkaMat.color.set(c); }
 
+  private bike: THREE.Object3D | null = null;
+  private wheels: THREE.Object3D[] = [];
+  private onBike = false;
+  /** Mode course : la moto apparaît sous le perso, assis jambes repliées. */
+  setVehicle(bike: boolean) {
+    if (bike === this.onBike) return;
+    this.onBike = bike;
+    if (bike && !this.bike && MODELS?.bike) {
+      this.bike = MODELS.bike.clone(true);
+      this.wheels = ['WheelF', 'WheelR'].map(n => this.bike!.getObjectByName(n)).filter((x): x is THREE.Object3D => !!x);
+      this.root.add(this.bike);
+    }
+    if (this.bike) this.bike.visible = bike;
+    this.body.position.set(0, bike ? 0.28 : 0, bike ? 0.12 : 0);
+    this.legL.rotation.x = this.legR.rotation.x = bike ? -1.25 : 0;
+  }
+
   private facePlane: THREE.Mesh | null = null;
   private faceParts: THREE.Object3D[] = [];
   /** Photo du joueur à la place du visage (rognée en disque) ; chaîne vide pour revenir au visage dessiné. */
@@ -113,6 +130,7 @@ export class Avatar {
   update(dt: number, speed: number, yaw: number, pitch = 0) {
     this.root.rotation.y = yaw + Math.PI;
     if (this.armR) this.armR.rotation.x = -pitch * 0.8;
+    if (this.onBike) { for (const w of this.wheels) w.rotation.x -= speed * dt / 0.36; return; }
     this.phase += dt * Math.min(speed, 12) * 1.3;
     const k = Math.min(1, speed / 6);
     this.legL.rotation.x = Math.sin(this.phase) * 0.6 * k;

@@ -186,3 +186,16 @@ button { font: inherit; }
 .hud .teambar .goal { font-size: 13px; color: var(--muted); }
 .hud .carry { position: absolute; left: 50%; top: 92px; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: var(--orange); color: #1a1006; font-size: 16px; }
 .hud.ctf .timer { top: 74px; }
+
+/* course */
+.hud .racebox { position: absolute; left: 18px; top: 14px; display: flex; flex-direction: column; gap: 4px; }
+.hud .racebox .rank b { font-size: 54px; line-height: .9; }
+.hud .racebox .rank span { font-size: 22px; vertical-align: top; }
+.hud .racebox .rank small { font-size: 16px; color: var(--muted); }
+.hud .racebox .lap { font-size: 18px; color: var(--orange); }
+.hud .countdown { position: absolute; left: 50%; top: 30%; transform: translateX(-50%); font-size: 96px; color: var(--ink); text-shadow: 0 4px 20px rgba(0,0,0,.5); }
+.hud .cparrow { position: absolute; left: 50%; top: 48px; width: 0; height: 0; transform-origin: 0 24px; }
+.hud .cparrow i { position: absolute; left: -16px; top: 0; width: 0; height: 0; border-left: 16px solid transparent; border-right: 16px solid transparent; border-bottom: 26px solid var(--orange); filter: drop-shadow(0 2px 4px rgba(0,0,0,.5)); }
+.hud .speedo { position: absolute; right: 18px; bottom: 60px; font-size: 30px; font-variant-numeric: tabular-nums; }
+.hud.racing .feed { top: 110px; }
+.hud.racing .score, .hud.racing .bottom .lbl em { display: none; }

@@ -21,6 +21,10 @@ export interface PlayerState {
   ability: Ability;
   abilityReadyAt: number;
   abilityUsedAt: number;
+  /** À pied ou à moto (mode course). */
+  vehicle: 'foot' | 'bike';
+  /** Vitesse de la moto le long de son cap (négative en marche arrière). */
+  speed: number;
 }
 
 export interface Input {
@@ -34,7 +38,8 @@ export interface Input {
 export function makePlayerState(pos: Vec3, yaw = 0, ability: Ability = 'aucune'): PlayerState {
   return {
     pos: { ...pos }, vel: { x: 0, y: 0, z: 0 }, yaw, pitch: 0, onGround: false, time: 0, dashUntil: -1, dashReadyAt: 0, padUntil: -1,
-    jumpHeld: false, airJumps: 0, airJumpsMax: ability === 'saut' ? 1 : 0, ability, abilityReadyAt: 0, abilityUsedAt: -1
+    jumpHeld: false, airJumps: 0, airJumpsMax: ability === 'saut' ? 1 : 0, ability, abilityReadyAt: 0, abilityUsedAt: -1,
+    vehicle: 'foot', speed: 0
   };
 }
 
@@ -47,6 +52,7 @@ const SUB = 1 / 120;
 
 /** Avance l'état d'un joueur selon une entrée. Fonction pure : renvoie un nouvel état. */
 export function stepPlayer(prev: PlayerState, input: Input, map: Collide): PlayerState {
+  if (prev.vehicle === 'bike') return stepBike(prev, input, map);
   const s = cloneState(prev);
   s.yaw = input.yaw;
   s.pitch = Math.max(-1.5, Math.min(1.5, input.pitch));
@@ -142,6 +148,53 @@ function subStep(s: PlayerState, input: Input, map: Collide, dt: number) {
       }
     }
   }
+}
+
+/** Moto : le cap tourne avec gauche et droite, avant accélère, arrière freine puis recule, Maj donne un turbo. */
+export function stepBike(prev: PlayerState, input: Input, map: Collide): PlayerState {
+  const s = cloneState(prev);
+  s.pitch = Math.max(-0.8, Math.min(0.8, input.pitch));
+  if (input.dash && s.time >= s.dashReadyAt && s.onGround) {
+    s.speed = Math.min(CONFIG.bikeMaxSpeed + CONFIG.bikeBoost, Math.max(s.speed, 0) + CONFIG.bikeBoost);
+    s.dashReadyAt = s.time + CONFIG.bikeBoostCooldown; s.dashUntil = s.time + 0.6;
+  }
+  if (input.jump && !s.jumpHeld && s.onGround) { s.vel.y = CONFIG.bikeHop; s.onGround = false; }
+  s.jumpHeld = input.jump;
+  let rest = Math.min(input.dt, 0.1);
+  while (rest > 1e-9) {
+    const dt = Math.min(rest, SUB);
+    const steer = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    const grip = s.onGround ? 1 : 0.35;
+    const rate = CONFIG.bikeTurn * Math.min(1, 0.3 + Math.abs(s.speed) / 10) * grip;
+    s.yaw += steer * rate * dt * (s.speed < -0.5 ? -1 : 1);
+    if (s.onGround) {
+      const boosting = s.time < s.dashUntil;
+      const top = CONFIG.bikeMaxSpeed + (boosting ? CONFIG.bikeBoost : 0);
+      if (input.fwd) s.speed = Math.min(top, s.speed + CONFIG.bikeAccel * dt);
+      else if (input.back) s.speed = s.speed > 0 ? Math.max(0, s.speed - CONFIG.bikeBrake * dt) : Math.max(-CONFIG.bikeReverse, s.speed - CONFIG.bikeAccel * 0.5 * dt);
+      else s.speed -= Math.sign(s.speed) * Math.min(Math.abs(s.speed), CONFIG.bikeCoast * dt);
+      if (!boosting && s.speed > CONFIG.bikeMaxSpeed) s.speed = Math.max(CONFIG.bikeMaxSpeed, s.speed - CONFIG.bikeBrake * 0.5 * dt);
+    }
+    const fx = -Math.sin(s.yaw), fz = -Math.cos(s.yaw);
+    s.vel.x = fx * s.speed; s.vel.z = fz * s.speed;
+    s.vel.y -= CONFIG.gravity * dt;
+    const R = CONFIG.bikeRadius;
+    const nx = s.pos.x + s.vel.x * dt, nz = s.pos.z + s.vel.z * dt;
+    if (!hitsWall(map, nx, nz, s.pos.y, R)) { s.pos.x = nx; s.pos.z = nz; }
+    else if (!hitsWall(map, nx, s.pos.z, s.pos.y, R)) { s.pos.x = nx; s.speed *= 0.85; }
+    else if (!hitsWall(map, s.pos.x, nz, s.pos.y, R)) { s.pos.z = nz; s.speed *= 0.85; }
+    else s.speed *= -CONFIG.bikeBounce;
+    let ny = s.pos.y + s.vel.y * dt;
+    const g = groundAt(map, s.pos.x, s.pos.z, Math.max(s.pos.y, ny));
+    if (ny <= g) { ny = g; s.vel.y = 0; s.onGround = true; }
+    else if (s.onGround && s.vel.y <= 0 && s.pos.y - g < 0.9) { ny = g; s.vel.y = 0; }
+    else s.onGround = false;
+    // sortie de rampe : la vitesse verticale suit la pente pour que la moto décolle au bout
+    if (s.onGround && ny > s.pos.y + 1e-4) s.vel.y = Math.max(s.vel.y, (ny - s.pos.y) / dt * 0.85);
+    s.pos.y = ny;
+    rest -= dt; s.time += dt;
+  }
+  return s;
 }
 
 export const eyeOf = (s: PlayerState): Vec3 => ({ x: s.pos.x, y: s.pos.y + CONFIG.eyeHeight, z: s.pos.z });
