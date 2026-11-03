@@ -9,3 +9,4 @@ export * from './shot';
 export * from './spawn';
 export * from './protocol';
 export * from './maps/index';
+export * from './maps/modes';

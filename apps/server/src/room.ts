@@ -1,6 +1,6 @@
 import {
   ABILITIES, BONUS_KINDS, CONFIG, DEFAULT_SETTINGS, MAP_DEFS, PARKA_COLORS, PICKUP_KINDS, STREAKS,
-  chooseSpawn, cleanName, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
+  chooseSpawn, cleanName, packPlayer, eyeOf, forwardFromAngles, getMap, makePlayerState, openYaw, stepPlayer, traceShotAll,
   type Ability, type ClientMsg, type Hat, type Input, type LobbyPlayer, type MapData, type NetPlayer, type PickupKind, type PickupState,
   type PlayerState, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg, type Vec3
 } from '@sdb/shared';
@@ -39,6 +39,8 @@ interface Player {
 interface PickupSpot { pos: Vec3; kind: PickupKind; active: boolean; respawnAt: number }
 
 const HISTORY_MS = 1000;
+/** Arrondit les nombres d'un état au millième : la précision suffit et le message est bien plus court. */
+const roundAll = <T extends object>(o: T): T => { const r = { ...o } as Record<string, unknown>; for (const k in r) if (typeof r[k] === 'number') r[k] = Math.round((r[k] as number) * 1000) / 1000; return r as T; };
 const END_SCREEN_MS = 8000;
 
 export class Room {
@@ -339,7 +341,12 @@ export class Room {
       shield: now < p.shieldBuffUntil || now < p.shieldAbilityUntil, streak: p.streak,
       ability: p.state.ability, abilityUntil: p.abilityUntil
     }));
-    for (const p of this.players.values()) p.send({ t: 'snapshot', time: now, ack: p.ack, players });
+    const packed = players.map(n => packPlayer(n));
+    let i = 0;
+    for (const p of this.players.values()) {
+      const me = roundAll(players[i++]);
+      p.send({ t: 'snapshot', time: now, ack: p.ack, me, o: packed.filter(x => x[0] !== p.id) });
+    }
   }
 
   private lobbyPlayers(): LobbyPlayer[] { return [...this.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, hat: p.hat })); }

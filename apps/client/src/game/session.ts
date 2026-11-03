@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CONFIG, DEFAULT_SETTINGS, STREAKS, forwardFromAngles, getMap, groundAt, traceShot,
+  CONFIG, DEFAULT_SETTINGS, STREAKS, forwardFromAngles, getMap, groundAt, traceShot, unpackPlayer,
   type Ability, type Input, type LobbyPlayer, type MapData, type NetPlayer, type RoomSettings, type RoomState, type ScoreLine, type ServerMsg
 } from '@sdb/shared';
 import { Pickups, PICKUP_STYLE } from '../render/pickups';
@@ -49,6 +49,7 @@ export class Session {
   private clockOffset = 0;
   private endsAt = 0;
   private lastFireAt = -1e9;
+  private lastSend = 0;
   private raf = 0;
   private pingTimer = 0;
   private settings = loadSettings();
@@ -169,13 +170,14 @@ export class Session {
         if (!this.input.locked) this.hud.showPrompt(true);
         break;
       case 'snapshot': {
-        this.interp.push(m.time, m.players);
-        const mine = m.players.find(p => p.id === this.me);
+        const others = m.o.map(unpackPlayer);
+        this.interp.push(m.time, others);
+        const mine = m.me;
         if (mine) this.myNet = mine;
         if (mine && this.predictor) {
           if (mine.alive && this.alive) this.predictor.reconcile(mine, m.ack);
         }
-        for (const p of m.players) this.avatars.get(p.id)?.setShield(p.shield);
+        for (const p of others) this.avatars.get(p.id)?.setShield(p.shield);
         break;
       }
       case 'respawn':
@@ -335,7 +337,7 @@ export class Session {
         this.acc -= STEP;
         if (this.alive) { const i = this.makeInput(); this.predictor.apply(i); this.outbox.push(i); }
       }
-      if (this.outbox.length) { this.conn.send({ t: 'input', inputs: this.outbox.splice(0, 30) }); }
+      if (this.outbox.length >= 2 || (this.outbox.length && now - this.lastSend > 0.05)) { this.conn.send({ t: 'input', inputs: this.outbox.splice(0, 30) }); this.lastSend = now; }
       if (this.input.takeFire() && this.alive && this.input.locked) this.fire(now);
       const pos = this.predictor.renderPos(dt);
       const cam = this.renderer.camera;

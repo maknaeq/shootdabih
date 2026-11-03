@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
-import { CONFIG, anglesTo, makePlayerState, type ServerMsg } from '@sdb/shared';
+import { CONFIG, DEFAULT_SETTINGS, anglesTo, makePlayerState, type ServerMsg } from '@sdb/shared';
 import { Room } from '../src/room';
 import { startServer } from '../src/http';
 
@@ -86,6 +86,7 @@ describe('salon', () => {
     expect(Math.hypot(after.x - before.x, after.z - before.z)).toBeGreaterThan(1);
     const snap = [...inbox.a].reverse().find(m => m.t === 'snapshot');
     expect(snap && snap.t === 'snapshot' && snap.ack).toBe(30);
+    expect(snap && snap.t === 'snapshot' && snap.o.length).toBe(1);
   });
 });
 
@@ -116,9 +117,9 @@ describe('ajouts', () => {
 
   it("réglages de l'hôte : éliminations illimitées, l'invité ne peut rien changer", () => {
     const { room, inbox, a, b, advance, place, aimAtB, now } = setup();
-    room.handle(b, { t: 'settings', settings: { mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
+    room.handle(b, { t: 'settings', settings: { ...DEFAULT_SETTINGS, mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
     expect(room.settings.scoreToWin).toBe(25);
-    room.handle(a, { t: 'settings', settings: { mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
+    room.handle(a, { t: 'settings', settings: { ...DEFAULT_SETTINGS, mapId: 'auto', scoreToWin: 0, timeLimitMin: 5, abilities: false, pickups: false } });
     room.handle(a, { t: 'start' });
     expect(room.players.get(a)!.state.ability).toBe('aucune');
     expect((room as unknown as { pickups: Array<{ kind: string }> }).pickups.length).toBe(0);

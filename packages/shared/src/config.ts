@@ -43,10 +43,27 @@ export const ABILITIES = ['grappin', 'blink', 'saut', 'bouclier'] as const;
 /** 'aucune' : capacités désactivées par l'hôte. */
 export type Ability = typeof ABILITIES[number] | 'aucune';
 
+export const GAME_MODES = ['dm', 'ctf', 'course'] as const;
+export type GameMode = typeof GAME_MODES[number];
+export const MODE_LABEL: Record<GameMode, string> = { dm: 'Chacun pour soi', ctf: 'Capture du drapeau', course: 'Course de motos' };
+
 /** Réglages de partie choisis par l'hôte. 0 = illimité. */
-export interface RoomSettings { mapId: string; scoreToWin: number; timeLimitMin: number; abilities: boolean; pickups: boolean }
-export const DEFAULT_SETTINGS: RoomSettings = { mapId: 'auto', scoreToWin: 25, timeLimitMin: 10, abilities: true, pickups: true };
+export interface RoomSettings {
+  mode: GameMode; mapId: string;
+  /** Éliminations pour gagner (chacun pour soi). */
+  scoreToWin: number;
+  /** Drapeaux à ramener pour gagner (capture du drapeau). */
+  captures: number;
+  /** Tours de circuit (course). */
+  laps: number;
+  timeLimitMin: number; abilities: boolean; pickups: boolean;
+  /** Course : le rayon fait chuter les autres motos. */
+  raceWeapons: boolean;
+}
+export const DEFAULT_SETTINGS: RoomSettings = { mode: 'dm', mapId: 'auto', scoreToWin: 25, captures: 3, laps: 3, timeLimitMin: 10, abilities: true, pickups: true, raceWeapons: true };
 export const SCORE_CHOICES = [10, 25, 50, 0] as const;
+export const CAPTURE_CHOICES = [1, 3, 5, 0] as const;
+export const LAP_CHOICES = [1, 3, 5] as const;
 export const TIME_CHOICES = [5, 10, 15, 20, 0] as const;
 /** Bonus au sol : effets temporaires. */
 export const BONUS_KINDS = ['overcharge', 'pierce', 'shield'] as const;
