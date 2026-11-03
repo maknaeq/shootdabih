@@ -30,6 +30,20 @@ export function scoreSpawns(map: Pick<MapData, 'boxes' | 'ramps' | 'spawns'>, en
   });
 }
 
+/** Orientation au spawn : vers la plus longue vue dégagée à hauteur d'yeux (24 directions, jusqu'à 30 m). */
+export function openYaw(map: Pick<MapData, 'boxes' | 'ramps'>, pos: Vec3): number {
+  const eye = { x: pos.x, y: pos.y + CONFIG.eyeHeight, z: pos.z };
+  let best = -1, bestYaw = 0;
+  for (let k = 0; k < 24; k++) {
+    const yaw = (k / 24) * Math.PI * 2;
+    const far = { x: eye.x - Math.sin(yaw) * 30, y: eye.y, z: eye.z - Math.cos(yaw) * 30 };
+    const t = segmentBlocked(map, eye, far);
+    const d = t === null ? 30 : t * 30;
+    if (d > best + 0.01) { best = d; bestYaw = yaw; }
+  }
+  return bestYaw;
+}
+
 /** Choisit un spawn : tirage parmi les meilleurs points valides, sinon le plus éloigné des adversaires. */
 export function chooseSpawn(map: Pick<MapData, 'boxes' | 'ramps' | 'spawns'>, enemies: Vec3[], lastUsed: number[], now: number, rand: () => number): number {
   const all = scoreSpawns(map, enemies, lastUsed, now);
